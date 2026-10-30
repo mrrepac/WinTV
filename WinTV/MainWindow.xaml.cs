@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Windows;
@@ -28,7 +28,7 @@ public partial class MainWindow : Window
     List<Channel> _view = new();
     /// <summary>Каналы без скрытых групп (или все, если скрытые сейчас показаны).</summary>
     List<Channel> _visible = new();
-    bool _showHidden;
+    bool _showHidden, _muted;
     Channel? _current, _previous, _epgChannel;
     Programme? _archive;
     string _archiveMode = "";
@@ -331,6 +331,7 @@ public partial class MainWindow : Window
         media.AddOption($":network-caching={_s.NetworkCaching}");
         if (!string.IsNullOrWhiteSpace(_s.UserAgent)) media.AddOption($":http-user-agent={_s.UserAgent}");
         _player!.Play(media);
+        _player.Mute = _muted;
         _player.Volume = _s.Volume;
         ShowCenter("Загрузка…");
     }
@@ -338,6 +339,7 @@ public partial class MainWindow : Window
     void OnPlaying()
     {
         KeepAwake.Set(true);
+        if (_player != null) { _player.Mute = _muted; _player.Volume = _s.Volume; }
         HideCenter();
         _retries = 0;
         if (_archive != null && _s.CatchupMode == "auto" && _s.CatchupDetected != _archiveMode)
@@ -405,6 +407,7 @@ public partial class MainWindow : Window
     {
         if (_player == null) return;
         _s.Volume = Math.Clamp(_s.Volume + delta, 0, 150);
+        _muted = false;
         _player.Volume = _s.Volume;
         _player.Mute = false;
         ShowToast($"🔊 {_s.Volume}%");
@@ -808,7 +811,7 @@ public partial class MainWindow : Window
                 break;
             case "pause": _player?.Pause(); break;
             case "mute":
-                if (_player != null) { _player.Mute = !_player.Mute; ShowToast(_player.Mute ? "🔇 Без звука" : $"🔊 {_s.Volume}%"); }
+                if (_player != null) { _muted = !_muted; _player.Mute = _muted; ShowToast(_muted ? "🔇 Без звука" : $"🔊 {_s.Volume}%"); }
                 break;
             case "audioTrack": CycleTrack(subtitles: false); break;
             case "subtitles": CycleTrack(subtitles: true); break;
