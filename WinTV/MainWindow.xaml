@@ -109,6 +109,55 @@
                         <!-- Пункты собираются при открытии: дорожки зависят от потока -->
                         <ContextMenu x:Name="VideoMenu" Opened="VideoMenu_Opened"/>
                     </Grid.ContextMenu>
+                    <!-- Список каналов поверх видео в полноэкранном режиме -->
+                    <Border x:Name="FsList" HorizontalAlignment="Left" Width="540" Margin="24,24,0,24"
+                            Background="#D8101318" CornerRadius="10" Visibility="Collapsed">
+                        <DockPanel>
+                            <DockPanel DockPanel.Dock="Top" Margin="18,14,18,8">
+                                <TextBlock DockPanel.Dock="Right" Text="← →  группа" Foreground="#8A93A3" VerticalAlignment="Center"/>
+                                <TextBlock x:Name="FsGroup" Foreground="White" FontSize="18" FontWeight="SemiBold"
+                                           TextTrimming="CharacterEllipsis"/>
+                            </DockPanel>
+                            <ListBox x:Name="FsChannels" Focusable="False" Margin="0,0,0,10"
+                                     PreviewMouseLeftButtonUp="FsChannels_PreviewMouseLeftButtonUp">
+                                <ListBox.ItemContainerStyle>
+                                    <Style TargetType="ListBoxItem" BasedOn="{StaticResource {x:Type ListBoxItem}}">
+                                        <Setter Property="Focusable" Value="False"/>
+                                    </Style>
+                                </ListBox.ItemContainerStyle>
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="40"/>
+                                                <ColumnDefinition Width="54"/>
+                                                <ColumnDefinition/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="{Binding Number}" Foreground="#8A93A3" FontSize="15" VerticalAlignment="Center"/>
+                                            <Border Grid.Column="1" Width="46" Height="30" CornerRadius="4" Background="#1A1E25">
+                                                <Image Source="{Binding Logo, Converter={StaticResource Logo}}"
+                                                       Stretch="Uniform" Margin="2" RenderOptions.BitmapScalingMode="HighQuality"/>
+                                            </Border>
+                                            <StackPanel Grid.Column="2" Margin="10,0,4,0" VerticalAlignment="Center">
+                                                <TextBlock x:Name="NameText" Text="{Binding Name}" Foreground="White" FontSize="15"
+                                                           FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Text="{Binding NowTitle}" Foreground="#A8B0BD" TextTrimming="CharacterEllipsis"
+                                                           Margin="0,1,0,3" Visibility="{Binding NowTitle, Converter={StaticResource EmptyVis}}"/>
+                                                <ProgressBar Style="{StaticResource ThinProgress}" Value="{Binding NowProgress, Mode=OneWay}"
+                                                             Visibility="{Binding NowTitle, Converter={StaticResource EmptyVis}}"/>
+                                            </StackPanel>
+                                        </Grid>
+                                        <DataTemplate.Triggers>
+                                            <DataTrigger Binding="{Binding IsPlaying}" Value="True">
+                                                <Setter TargetName="NameText" Property="Foreground" Value="{StaticResource Accent}"/>
+                                            </DataTrigger>
+                                        </DataTemplate.Triggers>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </DockPanel>
+                    </Border>
+
                     <Border x:Name="CenterBox" HorizontalAlignment="Center" VerticalAlignment="Center"
                             Background="#B0000000" CornerRadius="8" Padding="18,10" Visibility="Collapsed">
                         <TextBlock x:Name="CenterText" Foreground="White" FontSize="18"/>

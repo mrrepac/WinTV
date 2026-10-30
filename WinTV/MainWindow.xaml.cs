@@ -39,7 +39,7 @@ public partial class MainWindow : Window
     Point _lastMouse;
     string _numberBuffer = "";
 
-    bool _fullscreen, _fsPanelShown;
+    bool _fullscreen, _fsListShown;
     WindowState _prevState;
 
     public MainWindow()
@@ -56,7 +56,7 @@ public partial class MainWindow : Window
         _volumeTimer.Tick += (_, _) => { _volumeTimer.Stop(); VolumeBox.Visibility = Visibility.Collapsed; };
         _numberTimer.Tick += (_, _) => { _numberTimer.Stop(); JumpToNumber(); };
         _tickTimer.Tick += (_, _) => { if (Osd.Visibility == Visibility.Visible) FillOsd(); };
-        _cursorTimer.Tick += (_, _) => { _cursorTimer.Stop(); if (_fullscreen) Overlay.Cursor = Cursors.None; };
+        _cursorTimer.Tick += (_, _) => { _cursorTimer.Stop(); if (_fullscreen && !_fsListShown) Overlay.Cursor = Cursors.None; };
         _minuteTimer.Start();
         _tickTimer.Start();
 
@@ -217,6 +217,8 @@ public partial class MainWindow : Window
             : _all.Where(c => c.Group == g);
         _view = src.ToList();
         ChannelList.ItemsSource = _view;
+        FsChannels.ItemsSource = _view;
+        FsGroup.Text = q.Length > 0 ? $"Поиск: {q}" : g;
         if (_current != null && _view.Contains(_current))
         {
             ChannelList.SelectedItem = _current;
@@ -557,7 +559,7 @@ public partial class MainWindow : Window
     void ToggleFullscreen()
     {
         _fullscreen = !_fullscreen;
-        _fsPanelShown = false;
+        ShowFsList(false);
         var panels = _fullscreen ? Visibility.Collapsed : Visibility.Visible;
         GroupsPanel.Visibility = panels;
         ChannelsPanel.Visibility = panels;
@@ -578,17 +580,80 @@ public partial class MainWindow : Window
         Activate();
     }
 
-    void ShowFsPanel(bool show)
+    /// <summary>Список каналов поверх видео. Фокус остаётся в главном окне — клавиши разбирает OnFsListKey.</summary>
+    void ShowFsList(bool show)
     {
-        _fsPanelShown = show;
-        ChannelsPanel.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
-        if (show) FocusList(ChannelList);
+        _fsListShown = show;
+        FsList.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        if (!show) return;
+        ShowCursor();
+        FsSelect(_current != null && _view.Contains(_current) ? _current : _view.FirstOrDefault());
+    }
+
+    void FsSelect(Channel? ch)
+    {
+        FsChannels.SelectedItem = ch;
+        if (ch != null) FsChannels.ScrollIntoView(ch);
+    }
+
+    void FsMove(int delta)
+    {
+        if (_view.Count == 0) return;
+        int i = FsChannels.SelectedItem is Channel ch ? _view.IndexOf(ch) : -1;
+        i = i < 0 ? 0 : Math.Clamp(i + delta, 0, _view.Count - 1);
+        FsSelect(_view[i]);
+    }
+
+    void FsGroupStep(int delta)
+    {
+        if (GroupList.ItemsSource is not List<GroupItem> groups || groups.Count == 0) return;
+        SearchBox.Text = "";
+        int i = groups.IndexOf(GroupList.SelectedItem as GroupItem ?? groups[1]);
+        GroupList.SelectedItem = groups[((i + delta) % groups.Count + groups.Count) % groups.Count];
+        FsSelect(_current != null && _view.Contains(_current) ? _current : _view.FirstOrDefault());
+    }
+
+    void FsPlaySelected()
+    {
+        if (FsChannels.SelectedItem is not Channel ch) return;
+        if (ch != _current || _archive != null) Play(ch);
+        ChannelList.SelectedItem = ch;
+        ShowFsList(false);
+    }
+
+    bool OnFsListKey(Key key)
+    {
+        switch (key)
+        {
+            case Key.Up: FsMove(-1); break;
+            case Key.Down: FsMove(1); break;
+            case Key.PageUp: FsMove(-10); break;
+            case Key.PageDown: FsMove(10); break;
+            case Key.Home: FsMove(-_view.Count); break;
+            case Key.End: FsMove(_view.Count); break;
+            case Key.Left: FsGroupStep(-1); break;
+            case Key.Right: FsGroupStep(1); break;
+            case Key.Enter: FsPlaySelected(); break;
+            case Key.Escape: ShowFsList(false); break;
+            default: return false;
+        }
+        return true;
+    }
+
+    void FsChannels_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        Activate();
+        if (ItemsControl.ContainerFromElement(FsChannels, e.OriginalSource as DependencyObject) is not ListBoxItem item) return;
+        FsChannels.SelectedItem = item.DataContext;
+        FsPlaySelected();
+        e.Handled = true;
     }
 
     void Overlay_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         Activate();
         if (e.ClickCount == 2) ToggleFullscreen();
+        else if (_fsListShown) ShowFsList(false);
         else ShowOsd();
     }
 
@@ -622,10 +687,16 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (_fsListShown && Keyboard.Modifiers == ModifierKeys.None && OnFsListKey(e.Key))
+        {
+            e.Handled = true;
+            return;
+        }
+
         bool inChannels = ChannelList.IsKeyboardFocusWithin;
         bool inGroups = GroupList.IsKeyboardFocusWithin;
         bool inEpg = EpgList.IsKeyboardFocusWithin;
-        bool listsHidden = _fullscreen && !_fsPanelShown;
+        bool listsHidden = _fullscreen && !_fsListShown;
         bool plain = Keyboard.Modifiers == ModifierKeys.None;
         e.Handled = true;
 
@@ -633,8 +704,7 @@ public partial class MainWindow : Window
         switch (e.Key)
         {
             case Key.Escape when plain:
-                if (_fullscreen && _fsPanelShown) ShowFsPanel(false);
-                else if (EpgPanel.Visibility == Visibility.Visible && inEpg) { EpgPanel.Visibility = Visibility.Collapsed; FocusList(ChannelList); }
+                if (EpgPanel.Visibility == Visibility.Visible && inEpg) { EpgPanel.Visibility = Visibility.Collapsed; FocusList(ChannelList); }
                 else if (_archive != null && _current != null) Play(_current);
                 else if (_fullscreen) ToggleFullscreen();
                 else if (EpgPanel.Visibility == Visibility.Visible) EpgPanel.Visibility = Visibility.Collapsed;
@@ -649,13 +719,12 @@ public partial class MainWindow : Window
                 FocusList(ChannelList);
                 break;
             case Key.Enter when plain:
-                if (listsHidden) ShowFsPanel(true);
+                if (listsHidden) ShowFsList(true);
                 else if (inEpg) PlayEpgItem(EpgList.SelectedItem as EpgItem);
                 else if (inGroups) FocusList(ChannelList);
                 else if (ChannelList.SelectedItem is Channel sel)
                 {
                     if (sel != _current || _archive != null) Play(sel);
-                    if (_fullscreen) ShowFsPanel(false);
                 }
                 break;
             case Key.Left when plain && inChannels && !_fullscreen:
