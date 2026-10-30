@@ -109,9 +109,22 @@ public static class Updater
         return dash > 0 ? s[..dash] : s;
     }
 
+    public static Version? ParseVersion(string tag)
+    {
+        var s = CleanVersion(tag);
+        var parts = s.Split('.');
+        if (parts.Length == 1 && int.TryParse(parts[0], out var maj))
+            return new Version(maj, 0, 0);
+        if (parts.Length == 2 && int.TryParse(parts[0], out maj) && int.TryParse(parts[1], out var min))
+            return new Version(maj, min, 0);
+        if (Version.TryParse(s, out var v))
+            return new Version(v.Major, v.Minor, Math.Max(0, v.Build), Math.Max(0, v.Revision));
+        return null;
+    }
+
     public static bool IsNewer(string remote, string local) =>
-        Version.TryParse(CleanVersion(remote), out var r)
-        && Version.TryParse(CleanVersion(local), out var l)
+        ParseVersion(remote) is { } r
+        && ParseVersion(local) is { } l
         && r > l;
 
     /// <summary>Окно подтверждения и скачивания обновления.</summary>
@@ -318,9 +331,9 @@ public static class Updater
                 Start-Sleep -Milliseconds 300
             }
             Start-Sleep -Milliseconds 400
-            Copy-Item -Path '{{sourceDir.Replace("'", "''")}}\*' -Destination '{{appDir.Replace("'", "''")}}' -Recurse -Force
+            Get-ChildItem -LiteralPath '{{sourceDir.Replace("'", "''")}}' | Copy-Item -Destination '{{appDir.Replace("'", "''")}}' -Recurse -Force
             Start-Process -FilePath '{{exePath.Replace("'", "''")}}' -WorkingDirectory '{{appDir.Replace("'", "''")}}'
-            Remove-Item -Path '{{tempRoot.Replace("'", "''")}}' -Recurse -Force
+            Remove-Item -LiteralPath '{{tempRoot.Replace("'", "''")}}' -Recurse -Force
             """;
         await File.WriteAllTextAsync(scriptPath, script, System.Text.Encoding.UTF8, ct);
 

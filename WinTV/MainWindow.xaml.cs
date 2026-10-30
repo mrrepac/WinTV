@@ -79,6 +79,11 @@ public partial class MainWindow : Window
         _minuteTimer.Start();
         _tickTimer.Start();
 
+        // Overlay живёт в отдельном окне LibVLCSharp, которое не передаёт клавиши главному.
+        // После щелчка по кнопкам и ползунку панели управления возвращаем фокус, чтобы работали горячие клавиши.
+        Overlay.PreviewMouseLeftButtonUp += (_, _) =>
+            Dispatcher.BeginInvoke(DispatcherPriority.Input, () => { if (IsVisible) Activate(); });
+
         Loaded += (_, _) => { _isLoaded = true; UpdateVolumeUi(); UpdatePinBtn(); SetSidebarVisible(_sidebarVisible, initial: true); };
         ContentRendered += OnLoaded;
         Closing += OnClosing;
@@ -118,9 +123,7 @@ public partial class MainWindow : Window
         UpdatePinBtn();
         UpdatePlaylistButton();
         _ = CheckForUpdateAsync();
-        SetSidebarVisible(_sidebarVisible, initial: true);
         UpdateVolumeUi();
-        UpdatePinBtn();
         UpdatePlayPauseBtn();
         await LoadAllAsync(autoplay: true);
     }
@@ -1022,7 +1025,14 @@ public partial class MainWindow : Window
             case "prevInList": Step(-1); break;
             case "nextInList": Step(1); break;
             case "lastChannel":
-                if (_previous != null) { var p = _previous; ChannelList.SelectedItem = p; Play(p); }
+                if (_previous != null)
+                {
+                    var p = _previous;
+                    if (!_view.Contains(p)) { SearchBox.Text = ""; SelectGroup(AllGroup); }
+                    ChannelList.SelectedItem = p;
+                    ChannelList.ScrollIntoView(p);
+                    Play(p);
+                }
                 break;
             case "pause": _player?.Pause(); UpdatePlayPauseBtn(); break;
             case "mute":
@@ -1094,9 +1104,7 @@ public partial class MainWindow : Window
                 if (p == _s.Active) return;
                 _s.ActivePlaylist = p.Id;
                 _s.Save();
-                Topmost = _s.AlwaysOnTop;
-        UpdatePinBtn();
-        UpdatePlaylistButton();
+                UpdatePlaylistButton();
                 await OpenActivePlaylistAsync();
             };
             PlaylistMenu.Items.Add(item);
@@ -1121,10 +1129,7 @@ public partial class MainWindow : Window
         SearchBox.Text = "";
         GroupList.ItemsSource = null;
         _all = new();
-        _ = CheckForUpdateAsync();
-        SetSidebarVisible(_sidebarVisible, initial: true);
-        UpdateVolumeUi();
-        UpdatePinBtn();
+        UpdateControlsInfo();
         UpdatePlayPauseBtn();
         await LoadAllAsync(autoplay: true);
     }

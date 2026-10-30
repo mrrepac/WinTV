@@ -114,9 +114,12 @@ public static class Hotkeys
     public static Dictionary<Gesture, string> BuildMap(Settings s)
     {
         var map = new Dictionary<Gesture, string>();
-        foreach (var a in Actions)
-            foreach (var g in For(s, a))
-                if (g is { } gesture) map.TryAdd(gesture, a.Id);
+        // Сначала сочетания, назначенные пользователем: значения по умолчанию у новых действий
+        // (например, B или Ctrl+T) не должны перехватывать уже занятые им клавиши.
+        foreach (var custom in new[] { true, false })
+            foreach (var a in Actions.Where(a => s.Hotkeys.ContainsKey(a.Id) == custom))
+                foreach (var g in For(s, a))
+                    if (g is { } gesture) map.TryAdd(gesture, a.Id);
         return map;
     }
 }

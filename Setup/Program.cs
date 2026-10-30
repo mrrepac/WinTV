@@ -223,8 +223,16 @@ internal static class Program
 
         installBtn.Click += async (_, _) =>
         {
-            var targetDir = dirBox.Text.Trim();
+            string targetDir;
+            try { targetDir = NormalizeInstallDir(dirBox.Text.Trim()); }
+            catch
+            {
+                System.Windows.MessageBox.Show(win, "Укажите корректную папку установки.", "Установка WinTV",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
             if (string.IsNullOrEmpty(targetDir)) return;
+            dirBox.Text = targetDir;
 
             installBtn.IsEnabled = browseBtn.IsEnabled = dirBox.IsEnabled =
                 cbDesktop.IsEnabled = cbStartMenu.IsEnabled = cbLaunch.IsEnabled = false;
@@ -287,6 +295,24 @@ internal static class Program
     static SolidColorBrush Brush(string hex) =>
         (SolidColorBrush)new BrushConverter().ConvertFromString(hex)!;
 
+    /// <summary>
+    /// Корень диска или непустая папка без WinTV превращается в подпапку WinTV:
+    /// при удалении папка установки стирается целиком, и чужие файлы не должны в неё попасть.
+    /// </summary>
+    static string NormalizeInstallDir(string dir)
+    {
+        if (string.IsNullOrWhiteSpace(dir)) return "";
+        var full = Path.GetFullPath(Environment.ExpandEnvironmentVariables(dir));
+        var trimmed = full.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var root = Path.GetPathRoot(full)?.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        bool isRoot = string.Equals(trimmed, root, StringComparison.OrdinalIgnoreCase);
+        bool foreign = Directory.Exists(full)
+                       && Directory.EnumerateFileSystemEntries(full).Any()
+                       && !File.Exists(Path.Combine(full, "WinTV.exe"))
+                       && !File.Exists(Path.Combine(full, ".installed"));
+        return isRoot || foreign ? Path.Combine(full, "WinTV") : trimmed;
+    }
+
     static void InstallFiles(
         string targetDir,
         int waitPid,
@@ -304,16 +330,21 @@ internal static class Program
             }
         }
 
-        // Закрываем запущенные экземпляры WinTV, чтобы не блокировали перезапись файлов.
+        // Закрываем WinTV, запущенный из папки установки, чтобы он не блокировал перезапись файлов.
+        // Портативные копии в других папках не трогаем.
+        var targetExe = Path.GetFullPath(Path.Combine(targetDir, "WinTV.exe"));
         foreach (var proc in Process.GetProcessesByName("WinTV"))
         {
             try
             {
-                if (proc.Id == Process.GetCurrentProcess().Id) continue;
+                var path = proc.MainModule?.FileName;
+                if (path == null || !string.Equals(Path.GetFullPath(path), targetExe, StringComparison.OrdinalIgnoreCase))
+                    continue;
                 proc.Kill();
                 proc.WaitForExit(3000);
             }
             catch { }
+            finally { proc.Dispose(); }
         }
 
         Directory.CreateDirectory(targetDir);

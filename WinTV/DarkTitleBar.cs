@@ -14,14 +14,21 @@ public static class DarkTitleBar
     [DllImport("dwmapi.dll")]
     static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
 
-    public static void Apply(Window w) => w.SourceInitialized += (_, _) =>
+    public static void Apply(Window w)
     {
-        var h = new WindowInteropHelper(w).Handle;
-        int on = 1;
-        if (DwmSetWindowAttribute(h, DwmwaUseImmersiveDarkMode, ref on, sizeof(int)) != 0)
-            DwmSetWindowAttribute(h, DwmwaUseImmersiveDarkModeOld, ref on, sizeof(int));
-        // Цвет заголовка как у фона приложения (#0F1115, COLORREF = 0x00BBGGRR), работает на Windows 11.
-        int color = 0x0015110F;
-        DwmSetWindowAttribute(h, DwmwaCaptionColor, ref color, sizeof(int));
-    };
+        void Set()
+        {
+            var h = new WindowInteropHelper(w).Handle;
+            if (h == IntPtr.Zero) return;
+            int on = 1;
+            if (DwmSetWindowAttribute(h, DwmwaUseImmersiveDarkMode, ref on, sizeof(int)) != 0)
+                DwmSetWindowAttribute(h, DwmwaUseImmersiveDarkModeOld, ref on, sizeof(int));
+            // Цвет заголовка как у фона приложения (#0F1115, COLORREF = 0x00BBGGRR), работает на Windows 11.
+            int color = 0x0015110F;
+            DwmSetWindowAttribute(h, DwmwaCaptionColor, ref color, sizeof(int));
+        }
+
+        if (new WindowInteropHelper(w).Handle != IntPtr.Zero) Set();
+        else w.SourceInitialized += (_, _) => Set();
+    }
 }

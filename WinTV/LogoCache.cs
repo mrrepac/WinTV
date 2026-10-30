@@ -77,10 +77,18 @@ public static class LogoCache
         }
         finally { Downloads.Release(); }
 
-        var callbacks = Waiting.Remove(url, out var list) ? list : new();
-        if (img == null) return;
-        Images[url] = img;
-        foreach (var cb in callbacks) cb(img);
+        void Complete()
+        {
+            var callbacks = Waiting.Remove(url, out var list) ? list : new();
+            if (img == null) return;
+            Images[url] = img;
+            foreach (var cb in callbacks) cb(img);
+        }
+
+        if (Application.Current != null)
+            await Application.Current.Dispatcher.InvokeAsync(Complete);
+        else
+            Complete();
     }
 
     static string FileFor(string url) =>

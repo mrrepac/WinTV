@@ -58,9 +58,11 @@ public static class Epg
         var titlePool = new Dictionary<string, string>();
 
         using var fs = File.OpenRead(file);
-        Stream stream = fs;
-        if (fs.ReadByte() == 0x1f && fs.ReadByte() == 0x8b) { fs.Position = 0; stream = new GZipStream(fs, CompressionMode.Decompress); }
+        Stream? gzip = null;
+        if (fs.ReadByte() == 0x1f && fs.ReadByte() == 0x8b) { fs.Position = 0; gzip = new GZipStream(fs, CompressionMode.Decompress); }
         else fs.Position = 0;
+        using var _ = gzip;
+        Stream stream = gzip ?? (Stream)fs;
 
         using var r = XmlReader.Create(stream, new XmlReaderSettings
         {
