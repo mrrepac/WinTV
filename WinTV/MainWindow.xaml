@@ -17,6 +17,16 @@
         <!-- Группы -->
         <DockPanel x:Name="GroupsPanel" Grid.Column="0" Width="210" Background="{StaticResource Panel}">
             <TextBlock DockPanel.Dock="Top" Text="WinTV" FontSize="22" FontWeight="SemiBold" Margin="18,16,0,12"/>
+            <Button x:Name="PlaylistButton" DockPanel.Dock="Top" Margin="10,0,10,8" HorizontalContentAlignment="Stretch"
+                    ToolTip="Сменить плейлист" Click="PlaylistButton_Click" Visibility="Collapsed">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Right" Text="▾" Foreground="{StaticResource Muted}" Margin="6,0,0,0"/>
+                    <TextBlock x:Name="PlaylistName" TextTrimming="CharacterEllipsis"/>
+                </DockPanel>
+                <Button.ContextMenu>
+                    <ContextMenu x:Name="PlaylistMenu"/>
+                </Button.ContextMenu>
+            </Button>
             <StackPanel DockPanel.Dock="Bottom" Margin="10">
                 <Button Content="⟳  Обновить" HorizontalContentAlignment="Left" Click="Reload_Click" Margin="0,0,0,6"/>
                 <Button Content="⚙  Настройки" HorizontalContentAlignment="Left" Click="Settings_Click"/>

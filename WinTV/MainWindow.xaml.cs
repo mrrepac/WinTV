@@ -17,6 +17,9 @@ public partial class MainWindow : Window
     const string AllGroup = "Все каналы";
 
     readonly Settings _s = Settings.Load();
+    static readonly Playlist NoPlaylist = new();
+    /// <summary>Активный плейлист: его адрес, избранное, скрытые группы и история.</summary>
+    Playlist Pl => _s.Active ?? NoPlaylist;
     readonly HttpClient _http;
     LibVLC? _vlc;
     VlcPlayer? _player;
@@ -96,7 +99,8 @@ public partial class MainWindow : Window
         _player.EndReached += (_, _) => Dispatcher.BeginInvoke(OnStreamEnded);
         Video.MediaPlayer = _player;
 
-        if (string.IsNullOrWhiteSpace(_s.PlaylistUrl) && !OpenSettings()) return;
+        if (_s.Active == null && !OpenSettings()) return;
+        UpdatePlaylistButton();
         await LoadAllAsync(autoplay: true);
     }
 
@@ -116,11 +120,11 @@ public partial class MainWindow : Window
     async Task LoadAllAsync(bool autoplay)
     {
         SetStatus("Загрузка плейлиста…");
-        var cache = Path.Combine(Settings.Dir, "playlist.m3u");
+        var cache = Pl.CacheFile;
         string text;
         try
         {
-            text = await _http.GetStringAsync(_s.PlaylistUrl);
+            text = await _http.GetStringAsync(Pl.Url);
             Directory.CreateDirectory(Settings.Dir);
             await File.WriteAllTextAsync(cache, text);
         }
@@ -132,7 +136,7 @@ public partial class MainWindow : Window
         }
 
         var (channels, epgUrl) = M3uParser.Parse(text);
-        foreach (var c in channels) c.IsFavorite = _s.Favorites.Contains(c.Key);
+        foreach (var c in channels) c.IsFavorite = Pl.Favorites.Contains(c.Key);
         var oldKey = _current?.Key;
         _all = channels;
         _current = null;
@@ -140,7 +144,7 @@ public partial class MainWindow : Window
 
         SetStatus($"Каналов: {_all.Count}");
 
-        var lastKey = oldKey ?? (_s.NoHistory ? null : _s.LastChannel);
+        var lastKey = oldKey ?? (_s.NoHistory ? null : Pl.LastChannel);
         var last = lastKey == null ? null : _visible.FirstOrDefault(c => c.Key == lastKey);
         if (last != null)
         {
@@ -151,7 +155,7 @@ public partial class MainWindow : Window
         }
         FocusList(ChannelList);
 
-        _ = LoadEpgAsync(string.IsNullOrWhiteSpace(_s.EpgUrl) ? epgUrl : _s.EpgUrl);
+        _ = LoadEpgAsync(string.IsNullOrWhiteSpace(Pl.EpgUrl) ? epgUrl : Pl.EpgUrl);
     }
 
     async Task LoadEpgAsync(string? url)
@@ -179,16 +183,17 @@ public partial class MainWindow : Window
 
     void RebuildGroups()
     {
-        _visible = _showHidden || _s.HiddenGroups.Count == 0
+        var hidden = Pl.HiddenGroups;
+        _visible = _showHidden || hidden.Count == 0
             ? _all
-            : _all.Where(c => !_s.HiddenGroups.Contains(c.Group)).ToList();
+            : _all.Where(c => !hidden.Contains(c.Group)).ToList();
         var groups = new List<GroupItem>
         {
             new(FavGroup, _visible.Count(c => c.IsFavorite)),
             new(AllGroup, _visible.Count),
         };
         groups.AddRange(_visible.GroupBy(c => c.Group).Select(g => new GroupItem(g.Key, g.Count())));
-        var keepGroup = (GroupList.SelectedItem as GroupItem)?.Name ?? (_s.NoHistory ? null : _s.LastGroup);
+        var keepGroup = (GroupList.SelectedItem as GroupItem)?.Name ?? (_s.NoHistory ? null : Pl.LastGroup);
         GroupList.ItemsSource = groups;
         GroupList.SelectedItem = groups.FirstOrDefault(g => g.Name == keepGroup) ?? groups[1];
         ApplyFilter();
@@ -196,7 +201,7 @@ public partial class MainWindow : Window
 
     void ToggleHiddenGroups()
     {
-        if (_s.HiddenGroups.Count == 0) { ShowToast("Скрытых групп нет"); return; }
+        if (Pl.HiddenGroups.Count == 0) { ShowToast("Скрытых групп нет"); return; }
         if (!_showHidden && !Pin.Ask(this, _s.HiddenPinHash)) return;
         _showHidden = !_showHidden;
         RebuildGroups();
@@ -215,7 +220,7 @@ public partial class MainWindow : Window
 
     void GroupList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (GroupList.SelectedItem is GroupItem g) { _s.LastGroup = _s.NoHistory ? null : g.Name; ApplyFilter(); }
+        if (GroupList.SelectedItem is GroupItem g) { Pl.LastGroup = _s.NoHistory ? null : g.Name; ApplyFilter(); }
     }
 
     void SelectGroup(string name)
@@ -272,7 +277,7 @@ public partial class MainWindow : Window
     void ToggleFavorite(Channel ch)
     {
         ch.IsFavorite = !ch.IsFavorite;
-        if (ch.IsFavorite) _s.Favorites.Add(ch.Key); else _s.Favorites.Remove(ch.Key);
+        if (ch.IsFavorite) Pl.Favorites.Add(ch.Key); else Pl.Favorites.Remove(ch.Key);
         _s.Save();
         if (GroupList.ItemsSource is List<GroupItem> groups)
         {
@@ -314,7 +319,7 @@ public partial class MainWindow : Window
         }
         StartMedia(url);
 
-        _s.LastChannel = _s.NoHistory ? null : ch.Key;
+        Pl.LastChannel = _s.NoHistory ? null : ch.Key;
         _s.Save();
         ShowOsd();
     }
@@ -827,7 +832,58 @@ public partial class MainWindow : Window
 
     async void Settings_Click(object sender, RoutedEventArgs e)
     {
-        if (OpenSettings()) await LoadAllAsync(autoplay: false);
+        var before = _s.Active;
+        if (!OpenSettings()) return;
+        UpdatePlaylistButton();
+        if (_s.Active != before) await OpenActivePlaylistAsync();
+        else await LoadAllAsync(autoplay: false);
+    }
+
+    // ---------- Плейлисты ----------
+
+    void UpdatePlaylistButton()
+    {
+        PlaylistName.Text = Pl.Name;
+        PlaylistButton.Visibility = _s.Playlists.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    void PlaylistButton_Click(object sender, RoutedEventArgs e)
+    {
+        PlaylistMenu.Items.Clear();
+        foreach (var p in _s.Playlists)
+        {
+            var item = new MenuItem { Header = (p == _s.Active ? "✓  " : "     ") + p.Name };
+            item.Click += async (_, _) =>
+            {
+                if (p == _s.Active) return;
+                _s.ActivePlaylist = p.Id;
+                _s.Save();
+                UpdatePlaylistButton();
+                await OpenActivePlaylistAsync();
+            };
+            PlaylistMenu.Items.Add(item);
+        }
+        PlaylistMenu.PlacementTarget = PlaylistButton;
+        PlaylistMenu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
+        PlaylistMenu.IsOpen = true;
+    }
+
+    /// <summary>Переход на другой плейлист: всё, что относилось к прежнему, сбрасывается.</summary>
+    async Task OpenActivePlaylistAsync()
+    {
+        if (_current != null) _current.IsPlaying = false;
+        _current = _previous = _epgChannel = null;
+        _archive = null;
+        _showHidden = false;
+        _playId++;
+        if (_player != null) { var p = _player; await Task.Run(() => p.Stop()); }
+        HideCenter();
+        Osd.Visibility = Visibility.Collapsed;
+        EpgPanel.Visibility = Visibility.Collapsed;
+        SearchBox.Text = "";
+        GroupList.ItemsSource = null;
+        _all = new();
+        await LoadAllAsync(autoplay: true);
     }
 
     bool OpenSettings()
