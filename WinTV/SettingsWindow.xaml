@@ -1,4 +1,4 @@
-﻿<Window x:Class="WinTV.SettingsWindow"
+<Window x:Class="WinTV.SettingsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Настройки" Icon="Assets/wintv.ico" Width="1180" SizeToContent="Height" ResizeMode="NoResize"
@@ -109,7 +109,7 @@
             <TextBlock x:Name="HotkeyHint" DockPanel.Dock="Top" Foreground="{StaticResource Muted}" FontSize="12"
                        TextWrapping="Wrap" Margin="0,0,0,8"
                        Text="Щёлкните по ячейке и нажмите сочетание. Esc — отмена, ✕ — очистить. Стрелки в списках, Enter, Esc и цифры (номер канала) работают всегда."/>
-            <ScrollViewer Height="420" VerticalScrollBarVisibility="Auto">
+            <ScrollViewer MaxHeight="580" VerticalAlignment="Top" VerticalScrollBarVisibility="Auto">
                 <StackPanel x:Name="HotkeyRows" Margin="0,0,10,0"/>
             </ScrollViewer>
         </DockPanel>
