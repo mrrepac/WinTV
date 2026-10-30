@@ -90,6 +90,8 @@ public partial class MainWindow : Window
         {
             if (a.Cache < 100) ShowCenter($"Буферизация {a.Cache:0}%"); else HideCenter();
         });
+        _player.Paused += (_, _) => Dispatcher.BeginInvoke(() => KeepAwake.Set(false));
+        _player.Stopped += (_, _) => Dispatcher.BeginInvoke(() => KeepAwake.Set(false));
         _player.EncounteredError += (_, _) => Dispatcher.BeginInvoke(OnStreamFailed);
         _player.EndReached += (_, _) => Dispatcher.BeginInvoke(OnStreamEnded);
         Video.MediaPlayer = _player;
@@ -100,9 +102,11 @@ public partial class MainWindow : Window
 
     void OnClosing(object? sender, System.ComponentModel.CancelEventArgs e)
     {
+        KeepAwake.Set(false);
         if (_player != null)
         {
-            _s.Volume = _player.Volume;
+            // Без аудиовыхода (поток остановлен) VLC отдаёт −1 — тогда оставляем сохранённую громкость.
+            if (_player.Volume >= 0) _s.Volume = _player.Volume;
             var p = _player;
             Task.Run(() => p.Stop()).Wait(2000);
         }
@@ -328,6 +332,7 @@ public partial class MainWindow : Window
 
     void OnPlaying()
     {
+        KeepAwake.Set(true);
         HideCenter();
         _retries = 0;
         if (_archive != null && _s.CatchupMode == "auto" && _s.CatchupDetected != _archiveMode)
@@ -339,6 +344,7 @@ public partial class MainWindow : Window
 
     async void OnStreamFailed()
     {
+        KeepAwake.Set(false);
         if (_current == null) return;
         if (_archive != null)
         {
@@ -360,6 +366,7 @@ public partial class MainWindow : Window
 
     void OnStreamEnded()
     {
+        KeepAwake.Set(false);
         if (_archive == null) OnStreamFailed();
         else ShowCenter("Запись закончилась");
     }
