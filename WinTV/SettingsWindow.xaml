@@ -1,4 +1,4 @@
-<Window x:Class="WinTV.SettingsWindow"
+﻿<Window x:Class="WinTV.SettingsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Настройки" Icon="Assets/wintv.ico" Width="1180" SizeToContent="Height" ResizeMode="NoResize"
@@ -49,6 +49,30 @@
 
             <CheckBox x:Name="NoHistoryBox" Margin="0,18,0,0"
                       Content="Не сохранять историю (при запуске не открывать последний канал и группу)"/>
+
+            <DockPanel Margin="0,18,0,6">
+                <Button x:Name="UnlockButton" DockPanel.Dock="Right" Content="Ввести PIN" Padding="10,3"
+                        Click="Unlock_Click" Visibility="Collapsed"/>
+                <TextBlock Text="Скрытые группы (отмеченные не показываются)" VerticalAlignment="Center"/>
+            </DockPanel>
+            <Border BorderBrush="#2E3440" BorderThickness="1" CornerRadius="4" Background="#1C2028">
+                <ScrollViewer Height="130" VerticalScrollBarVisibility="Auto">
+                    <StackPanel x:Name="GroupChecks" Margin="8,4"/>
+                </ScrollViewer>
+            </Border>
+            <Grid x:Name="PinRow" Margin="0,8,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="120"/>
+                    <ColumnDefinition/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="Новый PIN для показа:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <PasswordBox x:Name="PinBox" Grid.Column="1" MaxLength="12"/>
+                <CheckBox x:Name="RemovePinBox" Grid.Column="2" Content="Убрать PIN" Margin="12,0,0,0"
+                          VerticalAlignment="Center" Visibility="Collapsed"/>
+            </Grid>
+            <TextBlock x:Name="PinHint" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,4,0,0" TextWrapping="Wrap"
+                       Text="Показать скрытые группы в главном окне — Ctrl+H. Пустое поле — PIN не меняется."/>
         </StackPanel>
 
         <!-- Горячие клавиши -->

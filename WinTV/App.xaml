@@ -114,6 +114,15 @@
             <Setter Property="Padding" Value="8,6"/>
         </Style>
 
+        <Style TargetType="PasswordBox">
+            <Setter Property="Background" Value="#1C2028"/>
+            <Setter Property="Foreground" Value="{StaticResource Text}"/>
+            <Setter Property="BorderBrush" Value="#2E3440"/>
+            <Setter Property="CaretBrush" Value="{StaticResource Text}"/>
+            <Setter Property="SelectionBrush" Value="{StaticResource Accent}"/>
+            <Setter Property="Padding" Value="8,6"/>
+        </Style>
+
         <Style TargetType="RadioButton">
             <Setter Property="Foreground" Value="{StaticResource Text}"/>
             <Setter Property="Margin" Value="0,3"/>

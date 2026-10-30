@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Text.Json;
 
 namespace WinTV;
@@ -15,6 +15,10 @@ public sealed class Settings
     public string UserAgent { get; set; } = "";
     public int NetworkCaching { get; set; } = 1500;
     public HashSet<string> Favorites { get; set; } = new();
+    /// <summary>Группы, которые не показываются в списках, поиске и при переключении каналов.</summary>
+    public HashSet<string> HiddenGroups { get; set; } = new();
+    /// <summary>Соль и хеш PIN на показ скрытых групп (см. Pin). Пусто — без PIN.</summary>
+    public string? HiddenPinHash { get; set; }
     /// <summary>Не запоминать последний канал и группу.</summary>
     public bool NoHistory { get; set; }
     public string? LastChannel { get; set; }

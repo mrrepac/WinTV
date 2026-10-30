@@ -23,6 +23,9 @@ public partial class MainWindow : Window
 
     List<Channel> _all = new();
     List<Channel> _view = new();
+    /// <summary>Каналы без скрытых групп (или все, если скрытые сейчас показаны).</summary>
+    List<Channel> _visible = new();
+    bool _showHidden;
     Channel? _current, _previous, _epgChannel;
     Programme? _archive;
     string _archiveMode = "";
@@ -129,21 +132,12 @@ public partial class MainWindow : Window
         var oldKey = _current?.Key;
         _all = channels;
         _current = null;
-
-        var groups = new List<GroupItem>
-        {
-            new(FavGroup, _all.Count(c => c.IsFavorite)),
-            new(AllGroup, _all.Count),
-        };
-        groups.AddRange(_all.GroupBy(c => c.Group).Select(g => new GroupItem(g.Key, g.Count())));
-        var keepGroup = (GroupList.SelectedItem as GroupItem)?.Name ?? (_s.NoHistory ? null : _s.LastGroup);
-        GroupList.ItemsSource = groups;
-        GroupList.SelectedItem = groups.FirstOrDefault(g => g.Name == keepGroup) ?? groups[1];
+        RebuildGroups();
 
         SetStatus($"Каналов: {_all.Count}");
 
         var lastKey = oldKey ?? (_s.NoHistory ? null : _s.LastChannel);
-        var last = lastKey == null ? null : _all.FirstOrDefault(c => c.Key == lastKey);
+        var last = lastKey == null ? null : _visible.FirstOrDefault(c => c.Key == lastKey);
         if (last != null)
         {
             if (!_view.Contains(last)) SelectGroup(AllGroup);
@@ -179,6 +173,32 @@ public partial class MainWindow : Window
         }
     }
 
+    void RebuildGroups()
+    {
+        _visible = _showHidden || _s.HiddenGroups.Count == 0
+            ? _all
+            : _all.Where(c => !_s.HiddenGroups.Contains(c.Group)).ToList();
+        var groups = new List<GroupItem>
+        {
+            new(FavGroup, _visible.Count(c => c.IsFavorite)),
+            new(AllGroup, _visible.Count),
+        };
+        groups.AddRange(_visible.GroupBy(c => c.Group).Select(g => new GroupItem(g.Key, g.Count())));
+        var keepGroup = (GroupList.SelectedItem as GroupItem)?.Name ?? (_s.NoHistory ? null : _s.LastGroup);
+        GroupList.ItemsSource = groups;
+        GroupList.SelectedItem = groups.FirstOrDefault(g => g.Name == keepGroup) ?? groups[1];
+        ApplyFilter();
+    }
+
+    void ToggleHiddenGroups()
+    {
+        if (_s.HiddenGroups.Count == 0) { ShowToast("Скрытых групп нет"); return; }
+        if (!_showHidden && !Pin.Ask(this, _s.HiddenPinHash)) return;
+        _showHidden = !_showHidden;
+        RebuildGroups();
+        ShowToast(_showHidden ? "Скрытые группы показаны" : "Скрытые группы спрятаны");
+    }
+
     void UpdateNowAll()
     {
         var now = DateTime.Now;
@@ -211,10 +231,10 @@ public partial class MainWindow : Window
         var q = SearchBox.Text.Trim();
         var g = (GroupList.SelectedItem as GroupItem)?.Name ?? AllGroup;
         IEnumerable<Channel> src =
-            q.Length > 0 ? _all.Where(c => c.Name.Contains(q, StringComparison.OrdinalIgnoreCase))
-            : g == FavGroup ? _all.Where(c => c.IsFavorite)
-            : g == AllGroup ? _all
-            : _all.Where(c => c.Group == g);
+            q.Length > 0 ? _visible.Where(c => c.Name.Contains(q, StringComparison.OrdinalIgnoreCase))
+            : g == FavGroup ? _visible.Where(c => c.IsFavorite)
+            : g == AllGroup ? _visible
+            : _visible.Where(c => c.Group == g);
         _view = src.ToList();
         ChannelList.ItemsSource = _view;
         FsChannels.ItemsSource = _view;
@@ -253,7 +273,7 @@ public partial class MainWindow : Window
         if (GroupList.ItemsSource is List<GroupItem> groups)
         {
             var sel = GroupList.SelectedItem as GroupItem;
-            groups[0] = new GroupItem(FavGroup, _all.Count(c => c.IsFavorite));
+            groups[0] = new GroupItem(FavGroup, _visible.Count(c => c.IsFavorite));
             GroupList.Items.Refresh();
             GroupList.SelectedItem = sel?.Name == FavGroup ? groups[0] : sel;
         }
@@ -346,7 +366,7 @@ public partial class MainWindow : Window
 
     void Step(int delta)
     {
-        var list = _view.Count > 0 ? _view : _all;
+        var list = _view.Count > 0 ? _view : _visible;
         if (list.Count == 0) return;
         int i = _current == null ? -1 : list.IndexOf(_current);
         i = i < 0 ? (delta > 0 ? 0 : list.Count - 1) : ((i + delta) % list.Count + list.Count) % list.Count;
@@ -361,7 +381,7 @@ public partial class MainWindow : Window
         var n = int.TryParse(_numberBuffer, out var v) ? v : 0;
         _numberBuffer = "";
         HideCenter();
-        var ch = _all.FirstOrDefault(c => c.Number == n);
+        var ch = _visible.FirstOrDefault(c => c.Number == n);
         if (ch == null) return;
         if (!_view.Contains(ch)) { SearchBox.Text = ""; SelectGroup(AllGroup); }
         ChannelList.SelectedItem = ch;
@@ -375,10 +395,11 @@ public partial class MainWindow : Window
         _s.Volume = Math.Clamp(_s.Volume + delta, 0, 150);
         _player.Volume = _s.Volume;
         _player.Mute = false;
-        ShowVolume($"🔊 {_s.Volume}%");
+        ShowToast($"🔊 {_s.Volume}%");
     }
 
-    void ShowVolume(string text)
+    /// <summary>Короткая подсказка в правом верхнем углу (громкость, дорожки и т. п.).</summary>
+    void ShowToast(string text)
     {
         VolumeText.Text = text;
         VolumeBox.Visibility = Visibility.Visible;
@@ -412,7 +433,7 @@ public partial class MainWindow : Window
         if (_player == null) return;
         var tracks = Tracks(subtitles);
         var label = subtitles ? "Субтитры" : "Звук";
-        if (tracks.Count <= (subtitles ? 1 : 0)) { ShowVolume($"{label}: нет"); return; }
+        if (tracks.Count <= (subtitles ? 1 : 0)) { ShowToast($"{label}: нет"); return; }
         int cur = subtitles ? _player.Spu : _player.AudioTrack;
         int i = tracks.FindIndex(t => t.Id == cur);
         SelectTrack(subtitles, tracks[(i + 1) % tracks.Count]);
@@ -422,7 +443,7 @@ public partial class MainWindow : Window
     {
         if (_player == null) return;
         if (subtitles) _player.SetSpu(t.Id); else _player.SetAudioTrack(t.Id);
-        ShowVolume($"{(subtitles ? "Субтитры" : "Звук")}: {t.Name}");
+        ShowToast($"{(subtitles ? "Субтитры" : "Звук")}: {t.Name}");
     }
 
     void VideoMenu_Opened(object sender, RoutedEventArgs e)
@@ -775,7 +796,7 @@ public partial class MainWindow : Window
                 break;
             case "pause": _player?.Pause(); break;
             case "mute":
-                if (_player != null) { _player.Mute = !_player.Mute; ShowVolume(_player.Mute ? "🔇 Без звука" : $"🔊 {_s.Volume}%"); }
+                if (_player != null) { _player.Mute = !_player.Mute; ShowToast(_player.Mute ? "🔇 Без звука" : $"🔊 {_s.Volume}%"); }
                 break;
             case "audioTrack": CycleTrack(subtitles: false); break;
             case "subtitles": CycleTrack(subtitles: true); break;
@@ -785,6 +806,7 @@ public partial class MainWindow : Window
             case "seekForward": Seek(30); break;
             case "seekBackLong": Seek(-300); break;
             case "seekForwardLong": Seek(300); break;
+            case "hiddenGroups": ToggleHiddenGroups(); break;
             case "reload": Reload_Click(this, new RoutedEventArgs()); break;
             case "settings": Settings_Click(this, new RoutedEventArgs()); break;
             default: return false;
@@ -803,7 +825,7 @@ public partial class MainWindow : Window
 
     bool OpenSettings()
     {
-        var w = new SettingsWindow(_s) { Owner = this };
+        var w = new SettingsWindow(_s, _all.Select(c => c.Group).Distinct()) { Owner = this };
         if (w.ShowDialog() != true) return false;
         _s.Save();
         ApplyUserAgent();

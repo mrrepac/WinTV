@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 
@@ -22,7 +22,9 @@ public partial class SettingsWindow : Window
         Key.NumPad5, Key.NumPad6, Key.NumPad7, Key.NumPad8, Key.NumPad9,
     };
 
-    public SettingsWindow(Settings s)
+    readonly Dictionary<string, CheckBox> _groupChecks = new();
+
+    public SettingsWindow(Settings s, IEnumerable<string> groups)
     {
         InitializeComponent();
         DarkTitleBar.Apply(this);
@@ -36,6 +38,44 @@ public partial class SettingsWindow : Window
 
         foreach (var a in Hotkeys.Actions) _hotkeys[a.Id] = Hotkeys.For(s, a);
         BuildHotkeyRows();
+        BuildGroupChecks(groups);
+    }
+
+    // ---------- Скрытые группы ----------
+
+    void BuildGroupChecks(IEnumerable<string> groups)
+    {
+        foreach (var g in groups.Concat(_s.HiddenGroups).Distinct())
+        {
+            var cb = new CheckBox { Content = g, IsChecked = _s.HiddenGroups.Contains(g), Margin = new Thickness(0, 2, 0, 2) };
+            _groupChecks[g] = cb;
+            GroupChecks.Children.Add(cb);
+        }
+        if (_groupChecks.Count == 0)
+            GroupChecks.Children.Add(new TextBlock { Text = "Группы появятся после загрузки плейлиста", Foreground = (System.Windows.Media.Brush)FindResource("Muted") });
+        bool locked = !string.IsNullOrEmpty(_s.HiddenPinHash);
+        RemovePinBox.Visibility = locked ? Visibility.Visible : Visibility.Collapsed;
+        SetLocked(locked);
+    }
+
+    void SetLocked(bool locked)
+    {
+        GroupChecks.IsEnabled = !locked;
+        PinRow.IsEnabled = !locked;
+        UnlockButton.Visibility = locked ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    void Unlock_Click(object sender, RoutedEventArgs e)
+    {
+        if (Pin.Ask(this, _s.HiddenPinHash)) SetLocked(false);
+    }
+
+    void SaveHiddenGroups()
+    {
+        if (!GroupChecks.IsEnabled) return; // не разблокировано — ничего не меняем
+        _s.HiddenGroups = _groupChecks.Where(kv => kv.Value.IsChecked == true).Select(kv => kv.Key).ToHashSet();
+        if (PinBox.Password.Length > 0) _s.HiddenPinHash = Pin.Hash(PinBox.Password);
+        else if (RemovePinBox.IsChecked == true) _s.HiddenPinHash = null;
     }
 
     // ---------- Горячие клавиши ----------
@@ -157,6 +197,7 @@ public partial class SettingsWindow : Window
         _s.NoHistory = NoHistoryBox.IsChecked == true;
         if (_s.NoHistory) { _s.LastChannel = null; _s.LastGroup = null; }
         SaveHotkeys();
+        SaveHiddenGroups();
         DialogResult = true;
     }
 }

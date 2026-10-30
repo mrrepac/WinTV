@@ -95,6 +95,7 @@ public static class Hotkeys
         new("seekForward", "Архив: вперёд 30 с", "Right"),
         new("seekBackLong", "Архив: назад 5 мин", "Shift+Left"),
         new("seekForwardLong", "Архив: вперёд 5 мин", "Shift+Right"),
+        new("hiddenGroups", "Показать / спрятать скрытые группы", "Ctrl+H"),
         new("reload", "Обновить плейлист", "Ctrl+R", "F5"),
         new("settings", "Настройки", "Ctrl+OemComma"),
     };
