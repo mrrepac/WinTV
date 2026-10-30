@@ -28,6 +28,7 @@ public partial class MainWindow : Window
     string _archiveMode = "";
     bool _isFallback;
     int _retries, _playId;
+    Dictionary<Gesture, string> _keymap;
 
     readonly DispatcherTimer _minuteTimer = new() { Interval = TimeSpan.FromSeconds(30) };
     readonly DispatcherTimer _osdTimer = new() { Interval = TimeSpan.FromSeconds(5) };
@@ -43,7 +44,8 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         DarkTitleBar.Apply(this);
-        _http =new HttpClient(new HttpClientHandler { AutomaticDecompression = DecompressionMethods.All })
+        _keymap = Hotkeys.BuildMap(_s);
+        _http = new HttpClient(new HttpClientHandler { AutomaticDecompression = DecompressionMethods.All })
         { Timeout = TimeSpan.FromMinutes(3) };
         ApplyUserAgent();
 
@@ -532,9 +534,6 @@ public partial class MainWindow : Window
 
     void OnKey(object sender, KeyEventArgs e)
     {
-        bool ctrl = Keyboard.Modifiers.HasFlag(ModifierKeys.Control);
-        bool shift = Keyboard.Modifiers.HasFlag(ModifierKeys.Shift);
-
         if (SearchBox.IsKeyboardFocusWithin)
         {
             if (e.Key == Key.Escape) { SearchBox.Text = ""; FocusList(ChannelList); e.Handled = true; }
@@ -546,45 +545,29 @@ public partial class MainWindow : Window
         bool inGroups = GroupList.IsKeyboardFocusWithin;
         bool inEpg = EpgList.IsKeyboardFocusWithin;
         bool listsHidden = _fullscreen && !_fsPanelShown;
+        bool plain = Keyboard.Modifiers == ModifierKeys.None;
         e.Handled = true;
 
+        // Навигация (не настраивается) — только без модификаторов; остальное идёт через карту горячих клавиш.
         switch (e.Key)
         {
-            case Key.F when ctrl:
-                if (_fullscreen) ToggleFullscreen();
-                SearchBox.Focus();
-                break;
-            case Key.D when ctrl:
-            case Key.Multiply:
-                if ((inChannels ? ChannelList.SelectedItem as Channel : _current) is { } favCh) ToggleFavorite(favCh);
-                break;
-            case Key.F:
-            case Key.F11:
-                ToggleFullscreen();
-                break;
-            case Key.Escape:
+            case Key.Escape when plain:
                 if (_fullscreen && _fsPanelShown) ShowFsPanel(false);
                 else if (EpgPanel.Visibility == Visibility.Visible && inEpg) { EpgPanel.Visibility = Visibility.Collapsed; FocusList(ChannelList); }
                 else if (_archive != null && _current != null) Play(_current);
                 else if (_fullscreen) ToggleFullscreen();
                 else if (EpgPanel.Visibility == Visibility.Visible) EpgPanel.Visibility = Visibility.Collapsed;
                 break;
-            case Key.PageUp:
+            case Key.Up when plain && listsHidden:
                 Step(-1);
                 break;
-            case Key.PageDown:
+            case Key.Down when plain && listsHidden:
                 Step(1);
                 break;
-            case Key.Up when listsHidden:
-                Step(-1);
-                break;
-            case Key.Down when listsHidden:
-                Step(1);
-                break;
-            case Key.Up or Key.Down when !inChannels && !inGroups && !inEpg:
+            case Key.Up or Key.Down when plain && !inChannels && !inGroups && !inEpg:
                 FocusList(ChannelList);
                 break;
-            case Key.Enter:
+            case Key.Enter when plain:
                 if (listsHidden) ShowFsPanel(true);
                 else if (inEpg) PlayEpgItem(EpgList.SelectedItem as EpgItem);
                 else if (inGroups) FocusList(ChannelList);
@@ -594,48 +577,20 @@ public partial class MainWindow : Window
                     if (_fullscreen) ShowFsPanel(false);
                 }
                 break;
-            case Key.Left when inChannels && !_fullscreen:
+            case Key.Left when plain && inChannels && !_fullscreen:
                 FocusList(GroupList);
                 break;
-            case Key.Right when inGroups:
+            case Key.Right when plain && inGroups:
                 FocusList(ChannelList);
                 break;
-            case Key.Right when inChannels && !_fullscreen:
+            case Key.Right when plain && inChannels && !_fullscreen:
                 ShowEpg(ChannelList.SelectedItem as Channel);
                 if (EpgList.Items.Count > 0) FocusList(EpgList);
                 break;
-            case Key.Left when inEpg:
+            case Key.Left when plain && inEpg:
                 FocusList(ChannelList);
                 break;
-            case Key.Left:
-                Seek(shift ? -300 : -30);
-                break;
-            case Key.Right:
-                Seek(shift ? 300 : 30);
-                break;
-            case Key.Back:
-                if (_previous != null) { var p = _previous; ChannelList.SelectedItem = p; Play(p); }
-                break;
-            case Key.Space:
-                _player?.Pause();
-                break;
-            case Key.M:
-                if (_player != null) { _player.Mute = !_player.Mute; ShowVolume(_player.Mute ? "🔇 Без звука" : $"🔊 {_s.Volume}%"); }
-                break;
-            case Key.OemPlus or Key.Add:
-                ChangeVolume(5);
-                break;
-            case Key.OemMinus or Key.Subtract:
-                ChangeVolume(-5);
-                break;
-            case Key.G:
-                ToggleEpg();
-                break;
-            case Key.I:
-                ShowOsd();
-                break;
-            case >= Key.D0 and <= Key.D9 when !ctrl:
-            case >= Key.NumPad0 and <= Key.NumPad9:
+            case (>= Key.D0 and <= Key.D9 or >= Key.NumPad0 and <= Key.NumPad9) when plain:
                 var digit = e.Key >= Key.NumPad0 ? e.Key - Key.NumPad0 : e.Key - Key.D0;
                 if (_numberBuffer.Length < 4) _numberBuffer += digit;
                 ShowCenter(_numberBuffer);
@@ -643,9 +598,46 @@ public partial class MainWindow : Window
                 _numberTimer.Start();
                 break;
             default:
-                e.Handled = false;
+                e.Handled = Gesture.FromEvent(e) is { } g && _keymap.TryGetValue(g, out var action) && RunAction(action, inChannels);
                 break;
         }
+    }
+
+    bool RunAction(string id, bool inChannels)
+    {
+        switch (id)
+        {
+            case "fullscreen": ToggleFullscreen(); break;
+            case "search":
+                if (_fullscreen) ToggleFullscreen();
+                SearchBox.Focus();
+                SearchBox.SelectAll();
+                break;
+            case "favorite":
+                if ((inChannels ? ChannelList.SelectedItem as Channel : _current) is { } ch) ToggleFavorite(ch);
+                break;
+            case "epg": ToggleEpg(); break;
+            case "info": ShowOsd(); break;
+            case "prevInList": Step(-1); break;
+            case "nextInList": Step(1); break;
+            case "lastChannel":
+                if (_previous != null) { var p = _previous; ChannelList.SelectedItem = p; Play(p); }
+                break;
+            case "pause": _player?.Pause(); break;
+            case "mute":
+                if (_player != null) { _player.Mute = !_player.Mute; ShowVolume(_player.Mute ? "🔇 Без звука" : $"🔊 {_s.Volume}%"); }
+                break;
+            case "volumeUp": ChangeVolume(5); break;
+            case "volumeDown": ChangeVolume(-5); break;
+            case "seekBack": Seek(-30); break;
+            case "seekForward": Seek(30); break;
+            case "seekBackLong": Seek(-300); break;
+            case "seekForwardLong": Seek(300); break;
+            case "reload": Reload_Click(this, new RoutedEventArgs()); break;
+            case "settings": Settings_Click(this, new RoutedEventArgs()); break;
+            default: return false;
+        }
+        return true;
     }
 
     // ---------- Настройки ----------
@@ -663,6 +655,7 @@ public partial class MainWindow : Window
         if (w.ShowDialog() != true) return false;
         _s.Save();
         ApplyUserAgent();
+        _keymap = Hotkeys.BuildMap(_s);
         return true;
     }
 

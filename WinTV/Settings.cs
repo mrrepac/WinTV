@@ -20,6 +20,8 @@ public sealed class Settings
     public string? LastChannel { get; set; }
     public string? LastGroup { get; set; }
     public int Volume { get; set; } = 80;
+    /// <summary>Переназначенные горячие клавиши: id действия → сочетания. Отсутствие — значения по умолчанию.</summary>
+    public Dictionary<string, List<string>> Hotkeys { get; set; } = new();
 
     public static string Dir { get; } = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WinTV");
