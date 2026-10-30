@@ -87,6 +87,7 @@ public partial class MainWindow : Window
         _player.EndReached += (_, _) => Dispatcher.BeginInvoke(OnStreamEnded);
         // Размер кадра известен только после создания видеовыхода — тогда и применяем масштаб.
         _player.Vout += (_, _) => Dispatcher.BeginInvoke(ApplyZoom);
+        Video.SizeChanged += (_, _) => ApplyZoom();
         Video.MediaPlayer = _player;
 
         if (string.IsNullOrWhiteSpace(_s.PlaylistUrl) && !OpenSettings()) return;
@@ -376,7 +377,7 @@ public partial class MainWindow : Window
         ShowVolume($"🔊 {_s.Volume}%");
     }
 
-    const double ZoomStep = 0.05, ZoomMax = 2.0;
+    const double ZoomStep = 0.05, ZoomMax = 2.5;
 
     void ChangeZoom(int steps)
     {
@@ -388,15 +389,21 @@ public partial class MainWindow : Window
         ShowVolume($"🔍 {_zoom * 100:0}%");
     }
 
-    /// <summary>Увеличение = обрезка кадра по центру; VLC вписывает оставшуюся часть в окно.</summary>
+    /// <summary>
+    /// Увеличение как в просмотрщике фото: кадр масштабируется относительно «вписанного» размера,
+    /// а в CropGeometry уходит часть, которая помещается в окно. Поэтому на широком мониторе
+    /// картинка сначала заполняет ширину (обрезаются только верх и низ), и лишь потом бока.
+    /// </summary>
     void ApplyZoom()
     {
         if (_player == null) return;
         if (_zoom <= 1.0) { _player.CropGeometry = null; return; }
         uint w = 0, h = 0;
-        if (!_player.Size(0, ref w, ref h) || w == 0 || h == 0) return;
-        var cw = (uint)Math.Round(w / _zoom);
-        var ch = (uint)Math.Round(h / _zoom);
+        double ww = Video.ActualWidth, wh = Video.ActualHeight;
+        if (!_player.Size(0, ref w, ref h) || w == 0 || h == 0 || ww <= 0 || wh <= 0) return;
+        var scale = Math.Min(ww / w, wh / h) * _zoom;
+        var cw = (uint)Math.Round(Math.Min(w, ww / scale));
+        var ch = (uint)Math.Round(Math.Min(h, wh / scale));
         _player.CropGeometry = $"{cw}x{ch}+{(w - cw) / 2}+{(h - ch) / 2}";
     }
 
