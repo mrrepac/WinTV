@@ -66,7 +66,7 @@
                             </Grid.ColumnDefinitions>
                             <TextBlock Text="{Binding Number}" Foreground="{StaticResource Muted}" VerticalAlignment="Center"/>
                             <Border Grid.Column="1" Width="46" Height="30" CornerRadius="4" Background="#1A1E25">
-                                <Image Source="{Binding Logo, Converter={StaticResource Logo}, IsAsync=False}"
+                                <Image Source="{Binding LogoImage}"
                                        Stretch="Uniform" Margin="2" RenderOptions.BitmapScalingMode="HighQuality"/>
                             </Border>
                             <StackPanel Grid.Column="2" Margin="8,0,4,0" VerticalAlignment="Center">
@@ -135,7 +135,7 @@
                                             </Grid.ColumnDefinitions>
                                             <TextBlock Text="{Binding Number}" Foreground="#8A93A3" FontSize="15" VerticalAlignment="Center"/>
                                             <Border Grid.Column="1" Width="46" Height="30" CornerRadius="4" Background="#1A1E25">
-                                                <Image Source="{Binding Logo, Converter={StaticResource Logo}}"
+                                                <Image Source="{Binding LogoImage}"
                                                        Stretch="Uniform" Margin="2" RenderOptions.BitmapScalingMode="HighQuality"/>
                                             </Border>
                                             <StackPanel Grid.Column="2" Margin="10,0,4,0" VerticalAlignment="Center">

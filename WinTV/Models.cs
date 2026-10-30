@@ -1,6 +1,7 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Globalization;
 using System.Runtime.CompilerServices;
+using System.Windows.Media;
 
 namespace WinTV;
 
@@ -30,6 +31,22 @@ public sealed class Channel : INotifyPropertyChanged
 
     /// <summary>Отсортированы по Start.</summary>
     public List<Programme>? Programmes { get; set; }
+
+    ImageSource? _logoImage;
+    bool _logoRequested;
+    /// <summary>Логотип из LogoCache; запрашивается при первом показе, после загрузки приходит PropertyChanged.</summary>
+    public ImageSource? LogoImage
+    {
+        get
+        {
+            if (!_logoRequested)
+            {
+                _logoRequested = true;
+                _logoImage = LogoCache.Get(Logo, img => { _logoImage = img; OnChanged(); });
+            }
+            return _logoImage;
+        }
+    }
 
     bool _isFavorite;
     public bool IsFavorite { get => _isFavorite; set { _isFavorite = value; OnChanged(); } }

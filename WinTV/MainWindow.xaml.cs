@@ -494,7 +494,7 @@ public partial class MainWindow : Window
         if (ch == null) return;
         OsdNumber.Text = ch.Number.ToString();
         OsdName.Text = ch.Name;
-        OsdLogo.Source = new LogoConverter().Convert(ch.Logo, typeof(object), null!, null!) as System.Windows.Media.ImageSource;
+        OsdLogo.Source = ch.LogoImage;
         OsdArchive.Visibility = _archive != null ? Visibility.Visible : Visibility.Collapsed;
         OsdClock.Text = DateTime.Now.ToString("HH:mm");
 
@@ -835,6 +835,7 @@ public partial class MainWindow : Window
 
     void ApplyUserAgent()
     {
+        LogoCache.SetUserAgent(string.IsNullOrWhiteSpace(_s.UserAgent) ? "WinTV/1.0" : _s.UserAgent);
         _http.DefaultRequestHeaders.UserAgent.Clear();
         _http.DefaultRequestHeaders.UserAgent.TryParseAdd(
             string.IsNullOrWhiteSpace(_s.UserAgent) ? "WinTV/1.0" : _s.UserAgent);
