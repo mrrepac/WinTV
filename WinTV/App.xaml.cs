@@ -10,6 +10,11 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        DispatcherUnhandledException += (s, args) =>
+        {
+            MessageBox.Show($"Произошла ошибка при запуске:\n\n{args.Exception}", "WinTV Ошибка",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+        };
         if (e.Args.Any(a => a.Equals("--uninstall", StringComparison.OrdinalIgnoreCase)))
         {
             RunUninstall();

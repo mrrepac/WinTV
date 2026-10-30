@@ -29,7 +29,7 @@ public partial class MainWindow : Window
     /// <summary>Каналы без скрытых групп (или все, если скрытые сейчас показаны).</summary>
     List<Channel> _visible = new();
     bool _showHidden, _muted;
-    bool _sidebarVisible = true, _updatingVolumeUi;
+    bool _sidebarVisible = true, _updatingVolumeUi, _isLoaded;
     readonly DispatcherTimer _controlsTimer = new() { Interval = TimeSpan.FromSeconds(3) };
     Channel? _current, _previous, _epgChannel;
     ReleaseInfo? _availableUpdate;
@@ -79,6 +79,7 @@ public partial class MainWindow : Window
         _minuteTimer.Start();
         _tickTimer.Start();
 
+        Loaded += (_, _) => { _isLoaded = true; UpdateVolumeUi(); UpdatePinBtn(); SetSidebarVisible(_sidebarVisible, initial: true); };
         ContentRendered += OnLoaded;
         Closing += OnClosing;
         PreviewKeyDown += OnKey;
@@ -437,7 +438,7 @@ public partial class MainWindow : Window
 
     void VolumeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
-        if (_updatingVolumeUi) return;
+        if (!_isLoaded || _updatingVolumeUi) return;
         if (sender is Slider slider)
         {
             int vol = (int)Math.Round(slider.Value);
@@ -457,6 +458,11 @@ public partial class MainWindow : Window
 
     void UpdateVolumeUi()
     {
+        if (ControlVolumeSlider == null || SideVolumeSlider == null ||
+            ControlVolumeText == null || SideVolumeText == null ||
+            ControlMuteBtn == null || SideMuteBtn == null)
+            return;
+
         _updatingVolumeUi = true;
         try
         {
@@ -497,6 +503,8 @@ public partial class MainWindow : Window
         _sidebarVisible = visible;
         _s.SidebarVisible = visible;
         if (!initial) _s.Save();
+        if (GroupsPanel == null || ChannelsPanel == null || ShowSidebarBtn == null || ControlSidebarBtn == null)
+            return;
 
         if (_fullscreen)
         {
@@ -539,6 +547,7 @@ public partial class MainWindow : Window
 
     void UpdatePinBtn()
     {
+        if (PinBtn == null) return;
         var accent = (System.Windows.Media.Brush)FindResource("Accent");
         var muted = (System.Windows.Media.Brush)FindResource("Muted");
         PinBtn.Foreground = _s.AlwaysOnTop ? accent : muted;
@@ -575,6 +584,7 @@ public partial class MainWindow : Window
 
     void UpdateControlsInfo()
     {
+        if (ControlChannelText == null || ControlProgrammeText == null) return;
         if (_current == null)
         {
             ControlChannelText.Text = "";
@@ -595,6 +605,7 @@ public partial class MainWindow : Window
 
     void UpdatePlayPauseBtn()
     {
+        if (PlayPauseBtn == null) return;
         bool playing = _player?.IsPlaying ?? false;
         PlayPauseBtn.Content = playing ? "⏸" : "▶";
         PlayPauseBtn.ToolTip = playing ? "Пауза (Пробел)" : "Воспроизведение (Пробел)";
