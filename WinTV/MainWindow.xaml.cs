@@ -649,6 +649,13 @@ public partial class MainWindow : Window
 
         switch (e.Key)
         {
+            // Первым: иначе ↑/↓ в полном экране и ←/→ в списках перехватят Ctrl+стрелки.
+            case Key.Up or Key.Down or Key.Left or Key.Right when ctrl:
+                // Шаг 5% свободного хода; Ctrl+стрелка двигает саму картинку в эту сторону.
+                Pan(e.Key == Key.Left ? -0.1 : e.Key == Key.Right ? 0.1 : 0,
+                    e.Key == Key.Up ? -0.1 : e.Key == Key.Down ? 0.1 : 0);
+                SaveZoom();
+                break;
             case Key.F when ctrl:
                 if (_fullscreen) ToggleFullscreen();
                 SearchBox.Focus();
@@ -729,12 +736,6 @@ public partial class MainWindow : Window
                 break;
             case Key.D0 or Key.NumPad0 when ctrl:
                 ChangeZoom(0);
-                break;
-            case Key.Up or Key.Down or Key.Left or Key.Right when ctrl:
-                // Шаг 5% свободного хода; Ctrl+стрелка двигает саму картинку в эту сторону.
-                Pan(e.Key == Key.Left ? -0.1 : e.Key == Key.Right ? 0.1 : 0,
-                    e.Key == Key.Up ? -0.1 : e.Key == Key.Down ? 0.1 : 0);
-                SaveZoom();
                 break;
             case Key.OemPlus or Key.Add:
                 ChangeVolume(5);
