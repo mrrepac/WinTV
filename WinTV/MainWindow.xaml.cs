@@ -35,6 +35,8 @@ public partial class MainWindow : Window
     readonly DispatcherTimer _volumeTimer = new() { Interval = TimeSpan.FromSeconds(1.5) };
     readonly DispatcherTimer _numberTimer = new() { Interval = TimeSpan.FromSeconds(1.5) };
     readonly DispatcherTimer _tickTimer = new() { Interval = TimeSpan.FromSeconds(1) };
+    readonly DispatcherTimer _cursorTimer = new() { Interval = TimeSpan.FromSeconds(2.5) };
+    Point _lastMouse;
     string _numberBuffer = "";
 
     bool _fullscreen, _fsPanelShown;
@@ -54,6 +56,7 @@ public partial class MainWindow : Window
         _volumeTimer.Tick += (_, _) => { _volumeTimer.Stop(); VolumeBox.Visibility = Visibility.Collapsed; };
         _numberTimer.Tick += (_, _) => { _numberTimer.Stop(); JumpToNumber(); };
         _tickTimer.Tick += (_, _) => { if (Osd.Visibility == Visibility.Visible) FillOsd(); };
+        _cursorTimer.Tick += (_, _) => { _cursorTimer.Stop(); if (_fullscreen) Overlay.Cursor = Cursors.None; };
         _minuteTimer.Start();
         _tickTimer.Start();
 
@@ -511,6 +514,7 @@ public partial class MainWindow : Window
             WindowStyle = WindowStyle.SingleBorderWindow;
             WindowState = _prevState;
         }
+        ShowCursor();
         Activate();
     }
 
@@ -526,6 +530,23 @@ public partial class MainWindow : Window
         Activate();
         if (e.ClickCount == 2) ToggleFullscreen();
         else ShowOsd();
+    }
+
+    // Мышь над видео ловит Overlay (он в отдельном окне LibVLCSharp), поэтому курсор прячем именно на нём.
+    void Overlay_MouseMove(object sender, MouseEventArgs e)
+    {
+        var pos = e.GetPosition(Overlay);
+        // Смена курсора порождает MouseMove без реального движения — такие события пропускаем.
+        if (Math.Abs(pos.X - _lastMouse.X) < 2 && Math.Abs(pos.Y - _lastMouse.Y) < 2) return;
+        _lastMouse = pos;
+        ShowCursor();
+    }
+
+    void ShowCursor()
+    {
+        Overlay.Cursor = null;
+        _cursorTimer.Stop();
+        if (_fullscreen) _cursorTimer.Start();
     }
 
     void Overlay_MouseWheel(object sender, MouseWheelEventArgs e) => ChangeVolume(e.Delta > 0 ? 5 : -5);
