@@ -1,4 +1,4 @@
-﻿using System.Windows.Input;
+using System.Windows.Input;
 
 namespace WinTV;
 
@@ -78,6 +78,8 @@ public static class Hotkeys
     public static readonly HotkeyAction[] Actions =
     {
         new("fullscreen", "Полный экран", "F", "F11"),
+        new("sidebar", "Боковая панель (скрыть / показать)", "B", "Ctrl+B"),
+        new("alwaysOnTop", "Поверх остальных окон", "Ctrl+T"),
         new("search", "Поиск канала", "Ctrl+F"),
         new("favorite", "Избранное: добавить / убрать", "Ctrl+D", "Multiply"),
         new("epg", "Программа передач", "G"),

@@ -1,5 +1,6 @@
-﻿using System.ComponentModel;
+using System.ComponentModel;
 using System.IO;
+using System.Net.Http;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -51,6 +52,7 @@ public partial class SettingsWindow : Window
         DarkTitleBar.Apply(this);
         _s = s;
         NoHistoryBox.IsChecked = s.NoHistory;
+        AlwaysOnTopBox.IsChecked = s.AlwaysOnTop;
         _hiddenTarget = s.Active;
         var active = s.Active;
         foreach (var p in s.Playlists)
@@ -65,6 +67,7 @@ public partial class SettingsWindow : Window
         foreach (var a in Hotkeys.Actions) _hotkeys[a.Id] = Hotkeys.For(s, a);
         BuildHotkeyRows();
         BuildGroupChecks(groups);
+        VersionText.Text = $"WinTV {Updater.CurrentVersion}";
     }
 
     // ---------- Плейлисты ----------
@@ -299,10 +302,33 @@ public partial class SettingsWindow : Window
         if (mode != _s.CatchupMode) _s.CatchupDetected = null;
         _s.CatchupMode = mode;
         _s.NoHistory = NoHistoryBox.IsChecked == true;
+        _s.AlwaysOnTop = AlwaysOnTopBox.IsChecked == true;
         if (_s.NoHistory)
             foreach (var p in _s.Playlists) { p.LastChannel = null; p.LastGroup = null; }
         SaveHotkeys();
         SaveHiddenGroups();
         DialogResult = true;
+    }
+
+    async void CheckUpdate_Click(object sender, RoutedEventArgs e)
+    {
+        CheckUpdateBtn.IsEnabled = false;
+        UpdateStatusText.Text = "Проверка обновлений…";
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+        var res = await Updater.CheckAsync(http);
+        CheckUpdateBtn.IsEnabled = true;
+
+        if (res.Error != null)
+        {
+            UpdateStatusText.Text = "Не удалось проверить: " + res.Error;
+            return;
+        }
+        if (res.Available is { } rel)
+        {
+            UpdateStatusText.Text = $"Доступна версия {rel.Version}";
+            Updater.ShowUpdateDialog(this, http, rel);
+            return;
+        }
+        UpdateStatusText.Text = $"У вас актуальная версия ({Updater.CurrentVersion})";
     }
 }

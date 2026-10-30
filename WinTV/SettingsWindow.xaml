@@ -74,6 +74,8 @@
 
             <CheckBox x:Name="NoHistoryBox" Margin="0,18,0,0"
                       Content="Не сохранять историю (при запуске не открывать последний канал и группу)"/>
+            <CheckBox x:Name="AlwaysOnTopBox" Margin="0,8,0,0"
+                      Content="Поверх остальных окон (Always on top)"/>
 
             <DockPanel Margin="0,18,0,6">
                 <Button x:Name="UnlockButton" DockPanel.Dock="Right" Content="Ввести PIN" Padding="10,3"
@@ -114,9 +116,16 @@
             </ScrollViewer>
         </DockPanel>
 
-        <StackPanel Grid.Row="1" Grid.ColumnSpan="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,22,0,0">
-            <Button Content="Сохранить" Background="{StaticResource Accent}" IsDefault="True" Click="Ok_Click" Margin="0,0,8,0"/>
-            <Button Content="Отмена" IsCancel="True"/>
-        </StackPanel>
+        <DockPanel Grid.Row="1" Grid.ColumnSpan="3" Margin="0,22,0,0">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                <Button Content="Сохранить" Background="{StaticResource Accent}" IsDefault="True" Click="Ok_Click" Margin="0,0,8,0"/>
+                <Button Content="Отмена" IsCancel="True"/>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock x:Name="VersionText" Foreground="{StaticResource Muted}" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                <Button x:Name="CheckUpdateBtn" Content="Проверить обновления" Padding="10,4" Click="CheckUpdate_Click"/>
+                <TextBlock x:Name="UpdateStatusText" Foreground="{StaticResource Muted}" VerticalAlignment="Center" Margin="12,0,0,0"/>
+            </StackPanel>
+        </DockPanel>
     </Grid>
 </Window>

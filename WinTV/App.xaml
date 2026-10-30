@@ -1,8 +1,7 @@
-﻿<Application x:Class="WinTV.App"
+<Application x:Class="WinTV.App"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:local="clr-namespace:WinTV"
-             StartupUri="MainWindow.xaml">
+             xmlns:local="clr-namespace:WinTV">
     <Application.Resources>
         <SolidColorBrush x:Key="Bg" Color="#0F1115"/>
         <SolidColorBrush x:Key="Panel" Color="#15181E"/>
@@ -199,6 +198,63 @@
                             <Border x:Name="PART_Track" Background="{TemplateBinding Background}" CornerRadius="1.5"/>
                             <Border x:Name="PART_Indicator" HorizontalAlignment="Left"
                                     Background="{TemplateBinding Foreground}" CornerRadius="1.5"/>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style TargetType="Slider">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{StaticResource Accent}"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Slider">
+                        <Grid VerticalAlignment="Center">
+                            <Border Height="4" Background="#2A2F3A" CornerRadius="2"/>
+                            <Track x:Name="PART_Track">
+                                <Track.DecreaseRepeatButton>
+                                    <RepeatButton Command="{x:Static Slider.DecreaseLarge}">
+                                        <RepeatButton.Template>
+                                            <ControlTemplate TargetType="RepeatButton">
+                                                <Border Height="4" Background="{StaticResource Accent}" CornerRadius="2"/>
+                                            </ControlTemplate>
+                                        </RepeatButton.Template>
+                                    </RepeatButton>
+                                </Track.DecreaseRepeatButton>
+                                <Track.IncreaseRepeatButton>
+                                    <RepeatButton Command="{x:Static Slider.IncreaseLarge}">
+                                        <RepeatButton.Template>
+                                            <ControlTemplate TargetType="RepeatButton">
+                                                <Border Height="4" Background="Transparent"/>
+                                            </ControlTemplate>
+                                        </RepeatButton.Template>
+                                    </RepeatButton>
+                                </Track.IncreaseRepeatButton>
+                                <Track.Thumb>
+                                    <Thumb>
+                                        <Thumb.Template>
+                                            <ControlTemplate TargetType="Thumb">
+                                                <Grid Width="14" Height="14">
+                                                    <Ellipse x:Name="ThumbEllipse" Fill="White" Width="12" Height="12"/>
+                                                </Grid>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter TargetName="ThumbEllipse" Property="Fill" Value="{StaticResource Accent}"/>
+                                                    </Trigger>
+                                                    <Trigger Property="IsDragging" Value="True">
+                                                        <Setter TargetName="ThumbEllipse" Property="Fill" Value="{StaticResource Accent}"/>
+                                                        <Setter TargetName="ThumbEllipse" Property="Width" Value="14"/>
+                                                        <Setter TargetName="ThumbEllipse" Property="Height" Value="14"/>
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Thumb.Template>
+                                    </Thumb>
+                                </Track.Thumb>
+                            </Track>
                         </Grid>
                     </ControlTemplate>
                 </Setter.Value>

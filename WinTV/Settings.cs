@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -37,6 +37,10 @@ public sealed class Settings
     /// <summary>Не запоминать последний канал и группу.</summary>
     public bool NoHistory { get; set; }
     public int Volume { get; set; } = 80;
+    /// <summary>Поверх остальных окон (Always on top).</summary>
+    public bool AlwaysOnTop { get; set; }
+    /// <summary>Показывать боковую панель (группы и каналы) в оконном режиме.</summary>
+    public bool SidebarVisible { get; set; } = true;
     /// <summary>Переназначенные горячие клавиши: id действия → сочетания. Отсутствие — значения по умолчанию.</summary>
     public Dictionary<string, List<string>> Hotkeys { get; set; } = new();
 

@@ -29,7 +29,10 @@ public partial class MainWindow : Window
     /// <summary>Каналы без скрытых групп (или все, если скрытые сейчас показаны).</summary>
     List<Channel> _visible = new();
     bool _showHidden, _muted;
+    bool _sidebarVisible = true, _updatingVolumeUi;
+    readonly DispatcherTimer _controlsTimer = new() { Interval = TimeSpan.FromSeconds(3) };
     Channel? _current, _previous, _epgChannel;
+    ReleaseInfo? _availableUpdate;
     Programme? _archive;
     string _archiveMode = "";
     bool _isFallback;
@@ -51,6 +54,8 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        _sidebarVisible = _s.SidebarVisible;
+        Topmost = _s.AlwaysOnTop;
         DarkTitleBar.Apply(this);
         _keymap = Hotkeys.BuildMap(_s);
         _http = new HttpClient(new HttpClientHandler { AutomaticDecompression = DecompressionMethods.All })
@@ -63,6 +68,14 @@ public partial class MainWindow : Window
         _numberTimer.Tick += (_, _) => { _numberTimer.Stop(); JumpToNumber(); };
         _tickTimer.Tick += (_, _) => { if (Osd.Visibility == Visibility.Visible) FillOsd(); };
         _cursorTimer.Tick += (_, _) => { _cursorTimer.Stop(); if (_fullscreen && !_fsListShown) Overlay.Cursor = Cursors.None; };
+        _controlsTimer.Tick += (_, _) =>
+        {
+            if (!PlayerControls.IsMouseOver && !ControlVolumeSlider.IsMouseCaptureWithin && !SideVolumeSlider.IsMouseCaptureWithin)
+            {
+                _controlsTimer.Stop();
+                PlayerControls.Visibility = Visibility.Collapsed;
+            }
+        };
         _minuteTimer.Start();
         _tickTimer.Start();
 
@@ -88,19 +101,26 @@ public partial class MainWindow : Window
             EnableKeyInput = false,
             EnableMouseInput = false,
         };
-        _player.Playing += (_, _) => Dispatcher.BeginInvoke(OnPlaying);
+        _player.Playing += (_, _) => Dispatcher.BeginInvoke(() => { OnPlaying(); UpdatePlayPauseBtn(); UpdateControlsInfo(); });
         _player.Buffering += (_, a) => Dispatcher.BeginInvoke(() =>
         {
             if (a.Cache < 100) ShowCenter($"Буферизация {a.Cache:0}%"); else HideCenter();
         });
-        _player.Paused += (_, _) => Dispatcher.BeginInvoke(() => KeepAwake.Set(false));
-        _player.Stopped += (_, _) => Dispatcher.BeginInvoke(() => KeepAwake.Set(false));
+        _player.Paused += (_, _) => Dispatcher.BeginInvoke(() => { KeepAwake.Set(false); UpdatePlayPauseBtn(); });
+        _player.Stopped += (_, _) => Dispatcher.BeginInvoke(() => { KeepAwake.Set(false); UpdatePlayPauseBtn(); });
         _player.EncounteredError += (_, _) => Dispatcher.BeginInvoke(OnStreamFailed);
         _player.EndReached += (_, _) => Dispatcher.BeginInvoke(OnStreamEnded);
         Video.MediaPlayer = _player;
 
         if (_s.Active == null && !OpenSettings()) return;
+        Topmost = _s.AlwaysOnTop;
+        UpdatePinBtn();
         UpdatePlaylistButton();
+        _ = CheckForUpdateAsync();
+        SetSidebarVisible(_sidebarVisible, initial: true);
+        UpdateVolumeUi();
+        UpdatePinBtn();
+        UpdatePlayPauseBtn();
         await LoadAllAsync(autoplay: true);
     }
 
@@ -320,6 +340,7 @@ public partial class MainWindow : Window
         StartMedia(url);
 
         Pl.LastChannel = _s.NoHistory ? null : ch.Key;
+        UpdateControlsInfo();
         _s.Save();
         ShowOsd();
     }
@@ -410,8 +431,176 @@ public partial class MainWindow : Window
         _muted = false;
         _player.Volume = _s.Volume;
         _player.Mute = false;
+        UpdateVolumeUi();
         ShowToast($"🔊 {_s.Volume}%");
     }
+
+    void VolumeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (_updatingVolumeUi) return;
+        if (sender is Slider slider)
+        {
+            int vol = (int)Math.Round(slider.Value);
+            _s.Volume = vol;
+            if (_player != null)
+            {
+                _player.Volume = vol;
+                if (_muted && vol > 0)
+                {
+                    _muted = false;
+                    _player.Mute = false;
+                }
+            }
+            UpdateVolumeUi();
+        }
+    }
+
+    void UpdateVolumeUi()
+    {
+        _updatingVolumeUi = true;
+        try
+        {
+            var vol = _s.Volume;
+            ControlVolumeSlider.Value = vol;
+            SideVolumeSlider.Value = vol;
+            var text = $"{vol}%";
+            ControlVolumeText.Text = text;
+            SideVolumeText.Text = text;
+
+            var icon = _muted || vol == 0 ? "🔇" : (vol < 50 ? "🔉" : "🔊");
+            ControlMuteBtn.Content = icon;
+            SideMuteBtn.Content = icon;
+            ControlVolumeSlider.Opacity = _muted ? 0.5 : 1.0;
+            SideVolumeSlider.Opacity = _muted ? 0.5 : 1.0;
+        }
+        finally
+        {
+            _updatingVolumeUi = false;
+        }
+    }
+
+    void MuteBtn_Click(object sender, RoutedEventArgs e)
+    {
+        if (_player == null) return;
+        _muted = !_muted;
+        _player.Mute = _muted;
+        UpdateVolumeUi();
+        ShowToast(_muted ? "🔇 Без звука" : $"🔊 {_s.Volume}%");
+    }
+
+    void SidebarToggle_Click(object sender, RoutedEventArgs e) => ToggleSidebar();
+
+    void ToggleSidebar() => SetSidebarVisible(!_sidebarVisible);
+
+    void SetSidebarVisible(bool visible, bool initial = false)
+    {
+        _sidebarVisible = visible;
+        _s.SidebarVisible = visible;
+        if (!initial) _s.Save();
+
+        if (_fullscreen)
+        {
+            GroupsPanel.Visibility = Visibility.Collapsed;
+            ChannelsPanel.Visibility = Visibility.Collapsed;
+            ShowSidebarBtn.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        var v = _sidebarVisible ? Visibility.Visible : Visibility.Collapsed;
+        GroupsPanel.Visibility = v;
+        ChannelsPanel.Visibility = v;
+        ShowSidebarBtn.Visibility = _sidebarVisible ? Visibility.Collapsed : Visibility.Visible;
+        ControlSidebarBtn.Content = _sidebarVisible ? "◀" : "☰";
+        ControlSidebarBtn.ToolTip = _sidebarVisible ? "Скрыть боковую панель (B)" : "Показать боковую панель (B)";
+
+        if (_sidebarVisible)
+        {
+            MinWidth = 700;
+            MinHeight = 400;
+        }
+        else
+        {
+            MinWidth = 320;
+            MinHeight = 180;
+            Focus();
+        }
+    }
+
+    void PinBtn_Click(object sender, RoutedEventArgs e) => ToggleAlwaysOnTop();
+
+    void ToggleAlwaysOnTop()
+    {
+        _s.AlwaysOnTop = !_s.AlwaysOnTop;
+        Topmost = _s.AlwaysOnTop;
+        _s.Save();
+        UpdatePinBtn();
+        ShowToast(_s.AlwaysOnTop ? "📌 Поверх остальных окон: вкл" : "Поверх остальных окон: выкл");
+    }
+
+    void UpdatePinBtn()
+    {
+        var accent = (System.Windows.Media.Brush)FindResource("Accent");
+        var muted = (System.Windows.Media.Brush)FindResource("Muted");
+        PinBtn.Foreground = _s.AlwaysOnTop ? accent : muted;
+        PinBtn.ToolTip = _s.AlwaysOnTop ? "Не закреплять поверх окон (Ctrl+T)" : "Поверх остальных окон (Ctrl+T)";
+    }
+
+    void ShowControls()
+    {
+        if (PlayerControls.Visibility != Visibility.Visible)
+        {
+            PlayerControls.Visibility = Visibility.Visible;
+            UpdateControlsInfo();
+        }
+        _controlsTimer.Stop();
+        _controlsTimer.Start();
+    }
+
+    void PlayerControls_MouseEnter(object sender, MouseEventArgs e) => _controlsTimer.Stop();
+
+    void PlayerControls_MouseLeave(object sender, MouseEventArgs e)
+    {
+        _controlsTimer.Stop();
+        _controlsTimer.Start();
+    }
+
+    void Overlay_MouseLeave(object sender, MouseEventArgs e)
+    {
+        if (!PlayerControls.IsMouseOver)
+        {
+            _controlsTimer.Stop();
+            _controlsTimer.Start();
+        }
+    }
+
+    void UpdateControlsInfo()
+    {
+        if (_current == null)
+        {
+            ControlChannelText.Text = "";
+            ControlProgrammeText.Text = "";
+            return;
+        }
+        ControlChannelText.Text = $"{_current.Number}. {_current.Name}";
+        ControlProgrammeText.Text = _archive != null ? $"[Архив] {_archive.Title}" : (_current.Now?.Title ?? "");
+        UpdatePlayPauseBtn();
+    }
+
+    void PlayPauseBtn_Click(object sender, RoutedEventArgs e)
+    {
+        if (_player == null) return;
+        _player.Pause();
+        UpdatePlayPauseBtn();
+    }
+
+    void UpdatePlayPauseBtn()
+    {
+        bool playing = _player?.IsPlaying ?? false;
+        PlayPauseBtn.Content = playing ? "⏸" : "▶";
+        PlayPauseBtn.ToolTip = playing ? "Пауза (Пробел)" : "Воспроизведение (Пробел)";
+    }
+
+    void FullscreenBtn_Click(object sender, RoutedEventArgs e) => ToggleFullscreen();
 
     /// <summary>Короткая подсказка в правом верхнем углу (громкость, дорожки и т. п.).</summary>
     void ShowToast(string text)
@@ -466,6 +655,9 @@ public partial class MainWindow : Window
         VideoMenu.Items.Clear();
         AddTrackItems(subtitles: false);
         AddTrackItems(subtitles: true);
+        VideoMenu.Items.Add(new Separator());
+        AddMenuItem(_sidebarVisible ? "Скрыть боковую панель" : "Показать боковую панель", ToggleSidebar);
+        AddMenuItem((_s.AlwaysOnTop ? "✓  " : "     ") + "Поверх остальных окон", ToggleAlwaysOnTop);
         VideoMenu.Items.Add(new Separator());
         AddMenuItem("Программа передач", () => ShowEpg(_current));
         AddMenuItem(_fullscreen ? "Выйти из полного экрана" : "Полный экран", ToggleFullscreen);
@@ -596,7 +788,8 @@ public partial class MainWindow : Window
     {
         _fullscreen = !_fullscreen;
         ShowFsList(false);
-        var panels = _fullscreen ? Visibility.Collapsed : Visibility.Visible;
+        var panels = (_fullscreen || !_sidebarVisible) ? Visibility.Collapsed : Visibility.Visible;
+        ShowSidebarBtn.Visibility = (!_fullscreen && !_sidebarVisible) ? Visibility.Visible : Visibility.Collapsed;
         GroupsPanel.Visibility = panels;
         ChannelsPanel.Visibility = panels;
         if (_fullscreen)
@@ -611,6 +804,9 @@ public partial class MainWindow : Window
         {
             WindowStyle = WindowStyle.SingleBorderWindow;
             WindowState = _prevState;
+            Topmost = _s.AlwaysOnTop;
+            MinWidth = _sidebarVisible ? 700 : 320;
+            MinHeight = _sidebarVisible ? 400 : 180;
         }
         ShowCursor();
         Activate();
@@ -688,6 +884,10 @@ public partial class MainWindow : Window
     void Overlay_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         Activate();
+        if (e.OriginalSource != Overlay && e.OriginalSource is DependencyObject d)
+        {
+            if (PlayerControls.IsAncestorOf(d) || ShowSidebarBtn.IsAncestorOf(d)) return;
+        }
         if (e.ClickCount == 2) ToggleFullscreen();
         else if (_fsListShown) ShowFsList(false);
         else ShowOsd();
@@ -700,6 +900,7 @@ public partial class MainWindow : Window
         // Смена курсора порождает MouseMove без реального движения — такие события пропускаем.
         if (Math.Abs(pos.X - _lastMouse.X) < 2 && Math.Abs(pos.Y - _lastMouse.Y) < 2) return;
         _lastMouse = pos;
+        ShowControls();
         ShowCursor();
     }
 
@@ -732,7 +933,7 @@ public partial class MainWindow : Window
         bool inChannels = ChannelList.IsKeyboardFocusWithin;
         bool inGroups = GroupList.IsKeyboardFocusWithin;
         bool inEpg = EpgList.IsKeyboardFocusWithin;
-        bool listsHidden = _fullscreen && !_fsListShown;
+        bool listsHidden = (_fullscreen || !_sidebarVisible) && !_fsListShown;
         bool plain = Keyboard.Modifiers == ModifierKeys.None;
         e.Handled = true;
 
@@ -743,6 +944,7 @@ public partial class MainWindow : Window
                 if (EpgPanel.Visibility == Visibility.Visible && inEpg) { EpgPanel.Visibility = Visibility.Collapsed; FocusList(ChannelList); }
                 else if (_archive != null && _current != null) Play(_current);
                 else if (_fullscreen) ToggleFullscreen();
+                else if (!_sidebarVisible) SetSidebarVisible(true);
                 else if (EpgPanel.Visibility == Visibility.Visible) EpgPanel.Visibility = Visibility.Collapsed;
                 break;
             case Key.Up when plain && listsHidden:
@@ -794,6 +996,8 @@ public partial class MainWindow : Window
         switch (id)
         {
             case "fullscreen": ToggleFullscreen(); break;
+            case "sidebar": ToggleSidebar(); break;
+            case "alwaysOnTop": ToggleAlwaysOnTop(); break;
             case "search":
                 if (_fullscreen) ToggleFullscreen();
                 SearchBox.Focus();
@@ -809,9 +1013,9 @@ public partial class MainWindow : Window
             case "lastChannel":
                 if (_previous != null) { var p = _previous; ChannelList.SelectedItem = p; Play(p); }
                 break;
-            case "pause": _player?.Pause(); break;
+            case "pause": _player?.Pause(); UpdatePlayPauseBtn(); break;
             case "mute":
-                if (_player != null) { _muted = !_muted; _player.Mute = _muted; ShowToast(_muted ? "🔇 Без звука" : $"🔊 {_s.Volume}%"); }
+                if (_player != null) { _muted = !_muted; _player.Mute = _muted; UpdateVolumeUi(); ShowToast(_muted ? "🔇 Без звука" : $"🔊 {_s.Volume}%"); }
                 break;
             case "audioTrack": CycleTrack(subtitles: false); break;
             case "subtitles": CycleTrack(subtitles: true); break;
@@ -833,10 +1037,28 @@ public partial class MainWindow : Window
 
     async void Reload_Click(object sender, RoutedEventArgs e) => await LoadAllAsync(autoplay: false);
 
+    void Update_Click(object sender, RoutedEventArgs e)
+    {
+        if (_availableUpdate != null) Updater.ShowUpdateDialog(this, _http, _availableUpdate);
+    }
+
+    async Task CheckForUpdateAsync()
+    {
+        var res = await Updater.CheckAsync(_http);
+        if (res.Available is { } rel)
+        {
+            _availableUpdate = rel;
+            UpdateButton.Content = $"⬆  Обновить до {rel.Version}";
+            UpdateButton.Visibility = Visibility.Visible;
+        }
+    }
+
     async void Settings_Click(object sender, RoutedEventArgs e)
     {
         var before = _s.Active;
         if (!OpenSettings()) return;
+        Topmost = _s.AlwaysOnTop;
+        UpdatePinBtn();
         UpdatePlaylistButton();
         if (_s.Active != before) await OpenActivePlaylistAsync();
         else await LoadAllAsync(autoplay: false);
@@ -861,7 +1083,9 @@ public partial class MainWindow : Window
                 if (p == _s.Active) return;
                 _s.ActivePlaylist = p.Id;
                 _s.Save();
-                UpdatePlaylistButton();
+                Topmost = _s.AlwaysOnTop;
+        UpdatePinBtn();
+        UpdatePlaylistButton();
                 await OpenActivePlaylistAsync();
             };
             PlaylistMenu.Items.Add(item);
@@ -886,6 +1110,11 @@ public partial class MainWindow : Window
         SearchBox.Text = "";
         GroupList.ItemsSource = null;
         _all = new();
+        _ = CheckForUpdateAsync();
+        SetSidebarVisible(_sidebarVisible, initial: true);
+        UpdateVolumeUi();
+        UpdatePinBtn();
+        UpdatePlayPauseBtn();
         await LoadAllAsync(autoplay: true);
     }
 
