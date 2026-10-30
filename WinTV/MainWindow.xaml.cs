@@ -391,6 +391,66 @@ public partial class MainWindow : Window
         ShowOsd();
     }
 
+    // ---------- Дорожки ----------
+
+    /// <summary>Звуковые дорожки или субтитры текущего потока; у субтитров первым идёт «Выкл» (id −1).</summary>
+    List<(int Id, string Name)> Tracks(bool subtitles)
+    {
+        if (_player == null) return new();
+        var list = (subtitles ? _player.SpuDescription : _player.AudioTrackDescription)
+            .Where(t => subtitles || t.Id >= 0)
+            .Select(t => (t.Id, Name: t.Id < 0 ? "Выкл" : t.Name ?? $"Дорожка {t.Id}"))
+            .ToList();
+        if (subtitles && list.Count > 0 && list[0].Id != -1) list.Insert(0, (-1, "Выкл"));
+        return list;
+    }
+
+    void CycleTrack(bool subtitles)
+    {
+        if (_player == null) return;
+        var tracks = Tracks(subtitles);
+        var label = subtitles ? "Субтитры" : "Звук";
+        if (tracks.Count <= (subtitles ? 1 : 0)) { ShowVolume($"{label}: нет"); return; }
+        int cur = subtitles ? _player.Spu : _player.AudioTrack;
+        int i = tracks.FindIndex(t => t.Id == cur);
+        SelectTrack(subtitles, tracks[(i + 1) % tracks.Count]);
+    }
+
+    void SelectTrack(bool subtitles, (int Id, string Name) t)
+    {
+        if (_player == null) return;
+        if (subtitles) _player.SetSpu(t.Id); else _player.SetAudioTrack(t.Id);
+        ShowVolume($"{(subtitles ? "Субтитры" : "Звук")}: {t.Name}");
+    }
+
+    void VideoMenu_Opened(object sender, RoutedEventArgs e)
+    {
+        VideoMenu.Items.Clear();
+        AddTrackItems(subtitles: false);
+        AddTrackItems(subtitles: true);
+        VideoMenu.Items.Add(new Separator());
+        AddMenuItem("Программа передач", () => ShowEpg(_current));
+        AddMenuItem(_fullscreen ? "Выйти из полного экрана" : "Полный экран", ToggleFullscreen);
+    }
+
+    void AddTrackItems(bool subtitles)
+    {
+        var tracks = Tracks(subtitles);
+        if (tracks.Count <= (subtitles ? 1 : 0)) return;
+        if (VideoMenu.Items.Count > 0) VideoMenu.Items.Add(new Separator());
+        VideoMenu.Items.Add(new MenuItem { Header = subtitles ? "Субтитры" : "Звуковая дорожка", IsEnabled = false });
+        int cur = subtitles ? _player!.Spu : _player!.AudioTrack;
+        foreach (var t in tracks)
+            AddMenuItem((t.Id == cur ? "✓  " : "     ") + t.Name, () => SelectTrack(subtitles, t));
+    }
+
+    void AddMenuItem(string header, Action action)
+    {
+        var item = new MenuItem { Header = header };
+        item.Click += (_, _) => action();
+        VideoMenu.Items.Add(item);
+    }
+
     // ---------- Экранные подсказки ----------
 
     void ShowCenter(string text) { CenterText.Text = text; CenterBox.Visibility = Visibility.Visible; }
@@ -648,6 +708,8 @@ public partial class MainWindow : Window
             case "mute":
                 if (_player != null) { _player.Mute = !_player.Mute; ShowVolume(_player.Mute ? "🔇 Без звука" : $"🔊 {_s.Volume}%"); }
                 break;
+            case "audioTrack": CycleTrack(subtitles: false); break;
+            case "subtitles": CycleTrack(subtitles: true); break;
             case "volumeUp": ChangeVolume(5); break;
             case "volumeDown": ChangeVolume(-5); break;
             case "seekBack": Seek(-30); break;

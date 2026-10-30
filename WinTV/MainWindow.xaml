@@ -105,6 +105,10 @@
                       MouseLeftButtonDown="Overlay_MouseLeftButtonDown"
                       MouseMove="Overlay_MouseMove"
                       MouseWheel="Overlay_MouseWheel">
+                    <Grid.ContextMenu>
+                        <!-- Пункты собираются при открытии: дорожки зависят от потока -->
+                        <ContextMenu x:Name="VideoMenu" Opened="VideoMenu_Opened"/>
+                    </Grid.ContextMenu>
                     <Border x:Name="CenterBox" HorizontalAlignment="Center" VerticalAlignment="Center"
                             Background="#B0000000" CornerRadius="8" Padding="18,10" Visibility="Collapsed">
                         <TextBlock x:Name="CenterText" Foreground="White" FontSize="18"/>

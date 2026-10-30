@@ -1,4 +1,4 @@
-using System.Windows.Input;
+﻿using System.Windows.Input;
 
 namespace WinTV;
 
@@ -87,6 +87,8 @@ public static class Hotkeys
         new("lastChannel", "Вернуться к прошлому каналу", "Back"),
         new("pause", "Пауза", "Space"),
         new("mute", "Без звука", "M"),
+        new("audioTrack", "Звуковая дорожка", "A"),
+        new("subtitles", "Субтитры", "S"),
         new("volumeUp", "Громкость +", "OemPlus", "Add"),
         new("volumeDown", "Громкость −", "OemMinus", "Subtract"),
         new("seekBack", "Архив: назад 30 с", "Left"),
