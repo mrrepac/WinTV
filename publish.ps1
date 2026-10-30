@@ -1,4 +1,4 @@
-# Готовая сборка WinTV: self-contained win-x64 (не требует установленного .NET),
+﻿# Готовая сборка WinTV: self-contained win-x64 (не требует установленного .NET),
 # только 64-битная LibVLC. Результат — publish\WinTV и publish\WinTV-<версия>-win-x64.zip.
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
