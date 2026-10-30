@@ -17,6 +17,9 @@ public sealed class Settings
     public HashSet<string> Favorites { get; set; } = new();
     /// <summary>Масштаб изображения по каналам (1.0 — без увеличения).</summary>
     public Dictionary<string, double> Zoom { get; set; } = new();
+    /// <summary>Сдвиг увеличенной картинки по каналам: −1…1 от свободного хода, 0 — по центру.</summary>
+    public Dictionary<string, double> PanX { get; set; } = new();
+    public Dictionary<string, double> PanY { get; set; } = new();
     /// <summary>Не запоминать последний канал и группу.</summary>
     public bool NoHistory { get; set; }
     public string? LastChannel { get; set; }
