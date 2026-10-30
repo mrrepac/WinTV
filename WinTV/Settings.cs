@@ -15,6 +15,8 @@ public sealed class Settings
     public string UserAgent { get; set; } = "";
     public int NetworkCaching { get; set; } = 1500;
     public HashSet<string> Favorites { get; set; } = new();
+    /// <summary>Масштаб изображения по каналам (1.0 — без увеличения).</summary>
+    public Dictionary<string, double> Zoom { get; set; } = new();
     /// <summary>Не запоминать последний канал и группу.</summary>
     public bool NoHistory { get; set; }
     public string? LastChannel { get; set; }

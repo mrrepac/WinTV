@@ -28,6 +28,7 @@ public partial class MainWindow : Window
     string _archiveMode = "";
     bool _isFallback;
     int _retries, _playId;
+    double _zoom = 1.0;
 
     readonly DispatcherTimer _minuteTimer = new() { Interval = TimeSpan.FromSeconds(30) };
     readonly DispatcherTimer _osdTimer = new() { Interval = TimeSpan.FromSeconds(5) };
@@ -84,6 +85,8 @@ public partial class MainWindow : Window
         });
         _player.EncounteredError += (_, _) => Dispatcher.BeginInvoke(OnStreamFailed);
         _player.EndReached += (_, _) => Dispatcher.BeginInvoke(OnStreamEnded);
+        // Размер кадра известен только после создания видеовыхода — тогда и применяем масштаб.
+        _player.Vout += (_, _) => Dispatcher.BeginInvoke(ApplyZoom);
         Video.MediaPlayer = _player;
 
         if (string.IsNullOrWhiteSpace(_s.PlaylistUrl) && !OpenSettings()) return;
@@ -274,6 +277,8 @@ public partial class MainWindow : Window
         _archive = archive;
         _isFallback = fallback;
         _retries = 0;
+        _zoom = _s.Zoom.GetValueOrDefault(ch.Key, 1.0);
+        _player.CropGeometry = null;
 
         var url = ch.Url;
         if (archive != null)
@@ -369,6 +374,30 @@ public partial class MainWindow : Window
         _player.Volume = _s.Volume;
         _player.Mute = false;
         ShowVolume($"🔊 {_s.Volume}%");
+    }
+
+    const double ZoomStep = 0.05, ZoomMax = 2.0;
+
+    void ChangeZoom(int steps)
+    {
+        if (_player == null || _current == null) return;
+        _zoom = steps == 0 ? 1.0 : Math.Clamp(Math.Round(_zoom + steps * ZoomStep, 2), 1.0, ZoomMax);
+        if (_zoom > 1.0) _s.Zoom[_current.Key] = _zoom; else _s.Zoom.Remove(_current.Key);
+        _s.Save();
+        ApplyZoom();
+        ShowVolume($"🔍 {_zoom * 100:0}%");
+    }
+
+    /// <summary>Увеличение = обрезка кадра по центру; VLC вписывает оставшуюся часть в окно.</summary>
+    void ApplyZoom()
+    {
+        if (_player == null) return;
+        if (_zoom <= 1.0) { _player.CropGeometry = null; return; }
+        uint w = 0, h = 0;
+        if (!_player.Size(0, ref w, ref h) || w == 0 || h == 0) return;
+        var cw = (uint)Math.Round(w / _zoom);
+        var ch = (uint)Math.Round(h / _zoom);
+        _player.CropGeometry = $"{cw}x{ch}+{(w - cw) / 2}+{(h - ch) / 2}";
     }
 
     void ShowVolume(string text)
@@ -526,7 +555,11 @@ public partial class MainWindow : Window
         else ShowOsd();
     }
 
-    void Overlay_MouseWheel(object sender, MouseWheelEventArgs e) => ChangeVolume(e.Delta > 0 ? 5 : -5);
+    void Overlay_MouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) ChangeZoom(e.Delta > 0 ? 1 : -1);
+        else ChangeVolume(e.Delta > 0 ? 5 : -5);
+    }
 
     // ---------- Клавиатура ----------
 
@@ -621,6 +654,15 @@ public partial class MainWindow : Window
                 break;
             case Key.M:
                 if (_player != null) { _player.Mute = !_player.Mute; ShowVolume(_player.Mute ? "🔇 Без звука" : $"🔊 {_s.Volume}%"); }
+                break;
+            case Key.OemPlus or Key.Add when ctrl:
+                ChangeZoom(1);
+                break;
+            case Key.OemMinus or Key.Subtract when ctrl:
+                ChangeZoom(-1);
+                break;
+            case Key.D0 or Key.NumPad0 when ctrl:
+                ChangeZoom(0);
                 break;
             case Key.OemPlus or Key.Add:
                 ChangeVolume(5);
