@@ -103,8 +103,6 @@
             <vlc:VideoView x:Name="Video" Background="Black">
                 <Grid x:Name="Overlay" Background="#01000000"
                       MouseLeftButtonDown="Overlay_MouseLeftButtonDown"
-                      MouseMove="Overlay_MouseMove"
-                      MouseLeftButtonUp="Overlay_MouseLeftButtonUp"
                       MouseWheel="Overlay_MouseWheel">
                     <Border x:Name="CenterBox" HorizontalAlignment="Center" VerticalAlignment="Center"
                             Background="#B0000000" CornerRadius="8" Padding="18,10" Visibility="Collapsed">

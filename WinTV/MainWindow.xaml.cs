@@ -28,9 +28,6 @@ public partial class MainWindow : Window
     string _archiveMode = "";
     bool _isFallback;
     int _retries, _playId;
-    double _zoom = 1.0, _panX, _panY;
-    Point? _dragStart;
-    double _dragPanX, _dragPanY;
 
     readonly DispatcherTimer _minuteTimer = new() { Interval = TimeSpan.FromSeconds(30) };
     readonly DispatcherTimer _osdTimer = new() { Interval = TimeSpan.FromSeconds(5) };
@@ -87,9 +84,6 @@ public partial class MainWindow : Window
         });
         _player.EncounteredError += (_, _) => Dispatcher.BeginInvoke(OnStreamFailed);
         _player.EndReached += (_, _) => Dispatcher.BeginInvoke(OnStreamEnded);
-        // Размер кадра известен только после создания видеовыхода — тогда и применяем масштаб.
-        _player.Vout += (_, _) => Dispatcher.BeginInvoke(ApplyZoom);
-        Video.SizeChanged += (_, _) => ApplyZoom();
         Video.MediaPlayer = _player;
 
         if (string.IsNullOrWhiteSpace(_s.PlaylistUrl) && !OpenSettings()) return;
@@ -280,10 +274,6 @@ public partial class MainWindow : Window
         _archive = archive;
         _isFallback = fallback;
         _retries = 0;
-        _zoom = _s.Zoom.GetValueOrDefault(ch.Key, 1.0);
-        _panX = _s.PanX.GetValueOrDefault(ch.Key);
-        _panY = _s.PanY.GetValueOrDefault(ch.Key);
-        _player.CropGeometry = null;
 
         var url = ch.Url;
         if (archive != null)
@@ -379,67 +369,6 @@ public partial class MainWindow : Window
         _player.Volume = _s.Volume;
         _player.Mute = false;
         ShowVolume($"🔊 {_s.Volume}%");
-    }
-
-    const double ZoomStep = 0.05, ZoomMax = 2.5;
-
-    void ChangeZoom(int steps)
-    {
-        if (_player == null || _current == null) return;
-        _zoom = steps == 0 ? 1.0 : Math.Clamp(Math.Round(_zoom + steps * ZoomStep, 2), 1.0, ZoomMax);
-        if (steps == 0) _panX = _panY = 0;
-        SaveZoom();
-        ApplyZoom();
-        ShowVolume($"🔍 {_zoom * 100:0}%");
-    }
-
-    /// <summary>Сдвиг картинки: dx/dy — доля свободного хода (положительное — картинка вправо/вниз).</summary>
-    void Pan(double dx, double dy)
-    {
-        if (_current == null || _zoom <= 1.0) return;
-        _panX = Math.Clamp(_panX - dx, -1, 1);
-        _panY = Math.Clamp(_panY - dy, -1, 1);
-        ApplyZoom();
-    }
-
-    void SaveZoom()
-    {
-        if (_current == null) return;
-        var key = _current.Key;
-        if (_zoom > 1.0) _s.Zoom[key] = _zoom; else _s.Zoom.Remove(key);
-        if (_zoom > 1.0 && _panX != 0) _s.PanX[key] = _panX; else _s.PanX.Remove(key);
-        if (_zoom > 1.0 && _panY != 0) _s.PanY[key] = _panY; else _s.PanY.Remove(key);
-        _s.Save();
-    }
-
-    /// <summary>Сколько DIP экрана приходится на весь свободный ход по X и Y (для перетаскивания мышью).</summary>
-    (double X, double Y) PanTravel()
-    {
-        uint w = 0, h = 0;
-        double ww = Video.ActualWidth, wh = Video.ActualHeight;
-        if (_player == null || !_player.Size(0, ref w, ref h) || w == 0 || h == 0) return (0, 0);
-        var scale = Math.Min(ww / w, wh / h) * _zoom;
-        return (Math.Max(0, w * scale - ww), Math.Max(0, h * scale - wh));
-    }
-
-    /// <summary>
-    /// Увеличение как в просмотрщике фото: кадр масштабируется относительно «вписанного» размера,
-    /// а в CropGeometry уходит часть, которая помещается в окно. Поэтому на широком мониторе
-    /// картинка сначала заполняет ширину (обрезаются только верх и низ), и лишь потом бока.
-    /// </summary>
-    void ApplyZoom()
-    {
-        if (_player == null) return;
-        if (_zoom <= 1.0) { _player.CropGeometry = null; return; }
-        uint w = 0, h = 0;
-        double ww = Video.ActualWidth, wh = Video.ActualHeight;
-        if (!_player.Size(0, ref w, ref h) || w == 0 || h == 0 || ww <= 0 || wh <= 0) return;
-        var scale = Math.Min(ww / w, wh / h) * _zoom;
-        var cw = (uint)Math.Round(Math.Min(w, ww / scale));
-        var ch = (uint)Math.Round(Math.Min(h, wh / scale));
-        var x = (uint)Math.Round((w - cw) / 2.0 * (1 + _panX));
-        var y = (uint)Math.Round((h - ch) / 2.0 * (1 + _panY));
-        _player.CropGeometry = $"{cw}x{ch}+{x}+{y}";
     }
 
     void ShowVolume(string text)
@@ -593,39 +522,11 @@ public partial class MainWindow : Window
     void Overlay_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         Activate();
-        if (e.ClickCount == 2) { _dragStart = null; ToggleFullscreen(); return; }
-        _dragStart = e.GetPosition(Overlay);
-        _dragPanX = _panX;
-        _dragPanY = _panY;
-        Overlay.CaptureMouse();
-    }
-
-    void Overlay_MouseMove(object sender, MouseEventArgs e)
-    {
-        if (_dragStart is not { } start || _zoom <= 1.0) return;
-        var (tx, ty) = PanTravel();
-        var d = e.GetPosition(Overlay) - start;
-        _panX = tx > 0 ? Math.Clamp(_dragPanX - 2 * d.X / tx, -1, 1) : _panX;
-        _panY = ty > 0 ? Math.Clamp(_dragPanY - 2 * d.Y / ty, -1, 1) : _panY;
-        if (Math.Abs(d.X) + Math.Abs(d.Y) > 3) { Overlay.Cursor = Cursors.SizeAll; ApplyZoom(); }
-    }
-
-    void Overlay_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
-    {
-        if (_dragStart is not { } start) return;
-        _dragStart = null;
-        Overlay.ReleaseMouseCapture();
-        Overlay.Cursor = null;
-        var d = e.GetPosition(Overlay) - start;
-        if (Math.Abs(d.X) + Math.Abs(d.Y) > 3 && _zoom > 1.0) SaveZoom();
+        if (e.ClickCount == 2) ToggleFullscreen();
         else ShowOsd();
     }
 
-    void Overlay_MouseWheel(object sender, MouseWheelEventArgs e)
-    {
-        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) ChangeZoom(e.Delta > 0 ? 1 : -1);
-        else ChangeVolume(e.Delta > 0 ? 5 : -5);
-    }
+    void Overlay_MouseWheel(object sender, MouseWheelEventArgs e) => ChangeVolume(e.Delta > 0 ? 5 : -5);
 
     // ---------- Клавиатура ----------
 
@@ -649,13 +550,6 @@ public partial class MainWindow : Window
 
         switch (e.Key)
         {
-            // Первым: иначе ↑/↓ в полном экране и ←/→ в списках перехватят Ctrl+стрелки.
-            case Key.Up or Key.Down or Key.Left or Key.Right when ctrl:
-                // Шаг 5% свободного хода; Ctrl+стрелка двигает саму картинку в эту сторону.
-                Pan(e.Key == Key.Left ? -0.1 : e.Key == Key.Right ? 0.1 : 0,
-                    e.Key == Key.Up ? -0.1 : e.Key == Key.Down ? 0.1 : 0);
-                SaveZoom();
-                break;
             case Key.F when ctrl:
                 if (_fullscreen) ToggleFullscreen();
                 SearchBox.Focus();
@@ -727,15 +621,6 @@ public partial class MainWindow : Window
                 break;
             case Key.M:
                 if (_player != null) { _player.Mute = !_player.Mute; ShowVolume(_player.Mute ? "🔇 Без звука" : $"🔊 {_s.Volume}%"); }
-                break;
-            case Key.OemPlus or Key.Add when ctrl:
-                ChangeZoom(1);
-                break;
-            case Key.OemMinus or Key.Subtract when ctrl:
-                ChangeZoom(-1);
-                break;
-            case Key.D0 or Key.NumPad0 when ctrl:
-                ChangeZoom(0);
                 break;
             case Key.OemPlus or Key.Add:
                 ChangeVolume(5);
