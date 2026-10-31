@@ -64,8 +64,10 @@ internal static class Program
                 }
                 return 0;
             }
-            catch
+            catch (Exception ex)
             {
+                System.Windows.MessageBox.Show("Ошибка обновления: " + ex.Message, "WinTV",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
                 return 1;
             }
         }
@@ -219,6 +221,8 @@ internal static class Program
         btnRow.Children.Add(cancelBtn);
         root.Children.Add(btnRow);
 
+        bool installing = false;
+        win.Closing += (_, e) => { if (installing) e.Cancel = true; };
         cancelBtn.Click += (_, _) => win.Close();
 
         installBtn.Click += async (_, _) =>
@@ -234,6 +238,8 @@ internal static class Program
             if (string.IsNullOrEmpty(targetDir)) return;
             dirBox.Text = targetDir;
 
+            installing = true;
+            cancelBtn.IsEnabled = false;
             installBtn.IsEnabled = browseBtn.IsEnabled = dirBox.IsEnabled =
                 cbDesktop.IsEnabled = cbStartMenu.IsEnabled = cbLaunch.IsEnabled = false;
             statusText.Visibility = progressBar.Visibility = Visibility.Visible;
@@ -263,12 +269,15 @@ internal static class Program
                     if (File.Exists(exe))
                         Process.Start(new ProcessStartInfo(exe) { WorkingDirectory = targetDir, UseShellExecute = true });
                 }
+                installing = false;
                 win.Close();
             }
             catch (Exception ex)
             {
                 System.Windows.MessageBox.Show(win, "Ошибка установки: " + ex.Message, "Установка WinTV",
                     MessageBoxButton.OK, MessageBoxImage.Error);
+                installing = false;
+                cancelBtn.IsEnabled = true;
                 installBtn.IsEnabled = browseBtn.IsEnabled = dirBox.IsEnabled =
                     cbDesktop.IsEnabled = cbStartMenu.IsEnabled = cbLaunch.IsEnabled = true;
             }
@@ -353,31 +362,7 @@ internal static class Program
             ?? throw new InvalidOperationException("В установщике отсутствует встроенный архив payload.zip.");
         using var archive = new ZipArchive(stream, ZipArchiveMode.Read);
 
-        int total = Math.Max(1, archive.Entries.Count);
-        int done = 0, lastPct = -1;
-        long totalBytes = 0;
-
-        foreach (var entry in archive.Entries)
-        {
-            done++;
-            int pct = done * 100 / total;
-            if (pct != lastPct) { lastPct = pct; onProgress?.Invoke(pct); }
-
-            var relPath = entry.FullName.Replace('/', Path.DirectorySeparatorChar);
-            // Если внутри архива корневая папка WinTV\, срезаем этот префикс.
-            if (relPath.StartsWith("WinTV" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
-                relPath = relPath.Substring(6);
-            if (string.IsNullOrEmpty(relPath) || entry.Name.Length == 0) continue;
-
-            var destPath = Path.Combine(targetDir, relPath);
-            var parent = Path.GetDirectoryName(destPath);
-            if (!string.IsNullOrEmpty(parent)) Directory.CreateDirectory(parent);
-
-            using var entryStream = entry.Open();
-            using var outFile = File.Create(destPath);
-            entryStream.CopyTo(outFile);
-            totalBytes += entry.Length;
-        }
+        long totalBytes = PayloadInstaller.Apply(archive, targetDir, onProgress);
 
         var markerPath = Path.Combine(targetDir, ".installed");
         if (!isSilentUpdate || File.Exists(markerPath))

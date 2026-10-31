@@ -266,7 +266,7 @@ public static class Updater
     {
         var tempRoot = Path.Combine(Path.GetTempPath(), "WinTV_Update_" + Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(tempRoot);
-        var filePath = Path.Combine(tempRoot, rel.AssetName!);
+        var filePath = Path.Combine(tempRoot, Path.GetFileName(rel.AssetName!));
 
         using (var req = new HttpRequestMessage(HttpMethod.Get, rel.DownloadUrl))
         {
@@ -291,6 +291,8 @@ public static class Updater
                     if (pct != lastPct) { lastPct = pct; onProgress(pct); }
                 }
             }
+            if (total > 0 && readTotal != total)
+                throw new IOException("Обновление скачано не полностью.");
         }
 
         var appDir = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
@@ -321,19 +323,54 @@ public static class Updater
                 .FirstOrDefault(d => File.Exists(Path.Combine(d, "WinTV.exe")));
             if (sub != null) sourceDir = sub;
         }
+        if (!File.Exists(Path.Combine(sourceDir, "WinTV.exe")))
+            throw new InvalidDataException("В архиве обновления отсутствует WinTV.exe.");
 
         var scriptPath = Path.Combine(tempRoot, "apply_update.ps1");
         var exePath = Path.Combine(appDir, "WinTV.exe");
         var script = $$"""
-            $ErrorActionPreference = 'SilentlyContinue'
-            for ($i = 0; $i -lt 60; $i++) {
-                if (-not (Get-Process -Id {{pid}} -ErrorAction SilentlyContinue)) { break }
-                Start-Sleep -Milliseconds 300
+            $ErrorActionPreference = 'Stop'
+            $source = '{{sourceDir.Replace("'", "''")}}'
+            $target = '{{appDir.Replace("'", "''")}}'
+            $backup = Join-Path '{{tempRoot.Replace("'", "''")}}' 'backup'
+            $changed = [System.Collections.Generic.List[object]]::new()
+            try {
+                for ($i = 0; $i -lt 60; $i++) {
+                    if (-not (Get-Process -Id {{pid}} -ErrorAction SilentlyContinue)) { break }
+                    Start-Sleep -Milliseconds 300
+                }
+                if (Get-Process -Id {{pid}} -ErrorAction SilentlyContinue) { throw 'WinTV не завершился.' }
+                foreach ($file in Get-ChildItem -LiteralPath $source -File -Recurse) {
+                    $relative = $file.FullName.Substring($source.Length + 1)
+                    $dest = [IO.Path]::GetFullPath((Join-Path $target $relative))
+                    if (-not $dest.StartsWith($target + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Некорректный путь обновления.' }
+                    $saved = Join-Path $backup $relative
+                    $existed = Test-Path -LiteralPath $dest
+                    if ($existed) {
+                        [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($saved)) | Out-Null
+                        Copy-Item -LiteralPath $dest -Destination $saved
+                    }
+                    [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($dest)) | Out-Null
+                    $changed.Add(@{ Dest = $dest; Saved = $saved; Existed = $existed })
+                    Copy-Item -LiteralPath $file.FullName -Destination $dest -Force
+                }
+                Start-Process -FilePath '{{exePath.Replace("'", "''")}}' -WorkingDirectory $target -WindowStyle Hidden
+            } catch {
+                $failure = $_.Exception.Message
+                $rollbackErrors = @()
+                for ($i = $changed.Count - 1; $i -ge 0; $i--) {
+                    $entry = $changed[$i]
+                    try {
+                        if ($entry.Existed) { Copy-Item -LiteralPath $entry.Saved -Destination $entry.Dest -Force }
+                        else { Remove-Item -LiteralPath $entry.Dest -Force -ErrorAction SilentlyContinue }
+                    } catch { $rollbackErrors += $_.Exception.Message }
+                }
+                $message = "Ошибка обновления: $failure`nРезервные файлы: $backup"
+                if ($rollbackErrors.Count) { $message += "`nОшибка восстановления: " + ($rollbackErrors -join '; ') }
+                $message | Set-Content -LiteralPath (Join-Path '{{tempRoot.Replace("'", "''")}}' 'update-error.txt')
+                Add-Type -AssemblyName PresentationFramework
+                [System.Windows.MessageBox]::Show($message, 'WinTV') | Out-Null
             }
-            Start-Sleep -Milliseconds 400
-            Get-ChildItem -LiteralPath '{{sourceDir.Replace("'", "''")}}' | Copy-Item -Destination '{{appDir.Replace("'", "''")}}' -Recurse -Force
-            Start-Process -FilePath '{{exePath.Replace("'", "''")}}' -WorkingDirectory '{{appDir.Replace("'", "''")}}'
-            Remove-Item -LiteralPath '{{tempRoot.Replace("'", "''")}}' -Recurse -Force
             """;
         await File.WriteAllTextAsync(scriptPath, script, System.Text.Encoding.UTF8, ct);
 

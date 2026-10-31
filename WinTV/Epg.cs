@@ -13,30 +13,49 @@ public static class Epg
 {
     static readonly TimeSpan MaxAge = TimeSpan.FromHours(12);
 
-    public static async Task<string> EnsureFileAsync(string url, HttpClient http)
+    public static async Task<string> EnsureFileAsync(string url, HttpClient http, CancellationToken ct = default, string? cacheDirectory = null)
     {
         var hash = Convert.ToHexString(SHA1.HashData(Encoding.UTF8.GetBytes(url)))[..10];
-        var file = Path.Combine(Settings.Dir, $"epg_{hash}.xml");
+        var file = Path.Combine(cacheDirectory ?? Settings.Dir, $"epg_{hash}.xml");
         if (File.Exists(file) && DateTime.Now - File.GetLastWriteTime(file) < MaxAge) return file;
 
-        Directory.CreateDirectory(Settings.Dir);
-        var tmp = file + ".tmp";
+        Directory.CreateDirectory(cacheDirectory ?? Settings.Dir);
+        var tmp = file + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
-            using (var resp = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead))
+            using (var resp = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct))
             {
                 resp.EnsureSuccessStatusCode();
                 await using var src = await resp.Content.ReadAsStreamAsync();
                 await using var dst = File.Create(tmp);
-                await src.CopyToAsync(dst);
+                await src.CopyToAsync(dst, ct);
             }
+            await Task.Run(() => ValidateFile(tmp, ct), ct);
+            ct.ThrowIfCancellationRequested();
             File.Move(tmp, file, true);
         }
-        catch when (File.Exists(file))
+        catch when (!ct.IsCancellationRequested && File.Exists(file))
         {
             // Нет сети — используем старую программу.
         }
+        finally { if (File.Exists(tmp)) File.Delete(tmp); }
         return file;
+    }
+
+    static void ValidateFile(string file, CancellationToken ct)
+    {
+        using var fs = File.OpenRead(file);
+        bool compressed = fs.ReadByte() == 0x1f && fs.ReadByte() == 0x8b;
+        fs.Position = 0;
+        using var gzip = compressed ? new GZipStream(fs, CompressionMode.Decompress) : null;
+        using var reader = XmlReader.Create(gzip ?? (Stream)fs, new XmlReaderSettings
+        {
+            DtdProcessing = DtdProcessing.Ignore,
+            XmlResolver = null,
+        });
+        if (reader.MoveToContent() != XmlNodeType.Element || reader.Name != "tv")
+            throw new InvalidDataException("Ответ не является программой XMLTV.");
+        while (reader.Read()) ct.ThrowIfCancellationRequested();
     }
 
     public static Dictionary<Channel, List<Programme>> Load(string file, IList<Channel> channels)

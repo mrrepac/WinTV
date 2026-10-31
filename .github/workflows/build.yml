@@ -1,0 +1,13 @@
+name: Build and regression checks
+on: [push, pull_request]
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - run: dotnet build WinTV/WinTV.csproj -c Release
+      - run: dotnet build Setup/WinTV.Setup.csproj -c Release
+      - run: dotnet run --project Tests/WinTV.Tests.csproj -c Release

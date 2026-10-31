@@ -21,6 +21,8 @@ public partial class MainWindow : Window
     /// <summary>Активный плейлист: его адрес, избранное, скрытые группы и история.</summary>
     Playlist Pl => _s.Active ?? NoPlaylist;
     readonly HttpClient _http;
+    CancellationTokenSource? _loadCts;
+    bool _closing;
     LibVLC? _vlc;
     VlcPlayer? _player;
 
@@ -101,6 +103,7 @@ public partial class MainWindow : Window
             Core.Initialize();
             return new LibVLC("--no-video-title-show");
         });
+        if (_closing) { _vlc.Dispose(); _vlc = null; return; }
         _player = new VlcPlayer(_vlc)
         {
             EnableHardwareDecoding = true,
@@ -130,6 +133,9 @@ public partial class MainWindow : Window
 
     void OnClosing(object? sender, System.ComponentModel.CancelEventArgs e)
     {
+        _closing = true;
+        _loadCts?.Cancel();
+        _playId++;
         KeepAwake.Set(false);
         if (_player != null)
         {
@@ -143,30 +149,39 @@ public partial class MainWindow : Window
 
     async Task LoadAllAsync(bool autoplay)
     {
+        if (_closing) return;
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
+        _loadCts = new CancellationTokenSource();
+        var ct = _loadCts.Token;
+        var playlist = Pl;
         SetStatus("Загрузка плейлиста…");
-        var cache = Pl.CacheFile;
-        string text;
+        List<Channel> channels;
+        string? epgUrl, warning;
         try
         {
-            text = await _http.GetStringAsync(Pl.Url);
-            Directory.CreateDirectory(Settings.Dir);
-            await File.WriteAllTextAsync(cache, text);
+            (channels, epgUrl, warning) = await PlaylistLoader.LoadAsync(playlist.Url, playlist.CacheFile, _http, ct);
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
         catch (Exception ex)
         {
-            if (!File.Exists(cache)) { SetStatus("Не удалось загрузить плейлист: " + ex.Message); return; }
-            text = await File.ReadAllTextAsync(cache);
-            SetStatus("Нет связи — открыт сохранённый плейлист");
+            if (!ct.IsCancellationRequested && playlist == Pl)
+                SetStatus("Не удалось загрузить плейлист: " + ex.Message);
+            return;
         }
-
-        var (channels, epgUrl) = M3uParser.Parse(text);
-        foreach (var c in channels) c.IsFavorite = Pl.Favorites.Contains(c.Key);
+        if (ct.IsCancellationRequested || playlist != Pl) return;
+        foreach (var c in channels) c.IsFavorite = playlist.Favorites.Contains(c.Key);
         var oldKey = _current?.Key;
+        if (_current != null) _current.IsPlaying = false;
+        var previousKey = _previous?.Key;
         _all = channels;
+        _previous = channels.FirstOrDefault(c => c.Key == previousKey);
+        _epgChannel = null;
+        EpgPanel.Visibility = Visibility.Collapsed;
         _current = null;
         RebuildGroups();
 
-        SetStatus($"Каналов: {_all.Count}");
+        SetStatus($"Каналов: {_all.Count}" + (warning == null ? "" : " · " + warning));
 
         var lastKey = oldKey ?? (_s.NoHistory ? null : Pl.LastChannel);
         var last = lastKey == null ? null : _visible.FirstOrDefault(c => c.Key == lastKey);
@@ -177,22 +192,33 @@ public partial class MainWindow : Window
             ChannelList.SelectedItem = last;
             ChannelList.ScrollIntoView(last);
         }
+        else if (oldKey != null)
+        {
+            _archive = null;
+            _playId++;
+            KeepAwake.Set(false);
+            HideCenter();
+            Osd.Visibility = Visibility.Collapsed;
+            UpdateControlsInfo();
+            if (_player != null) { var player = _player; await Task.Run(() => player.Stop()); }
+            if (ct.IsCancellationRequested || playlist != Pl) return;
+            UpdatePlayPauseBtn();
+        }
         FocusList(ChannelList);
 
-        _ = LoadEpgAsync(string.IsNullOrWhiteSpace(Pl.EpgUrl) ? epgUrl : Pl.EpgUrl);
+        _ = LoadEpgAsync(string.IsNullOrWhiteSpace(playlist.EpgUrl) ? epgUrl : playlist.EpgUrl, channels, ct);
     }
 
-    async Task LoadEpgAsync(string? url)
+    async Task LoadEpgAsync(string? url, List<Channel> channels, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(url)) return;
         var count = _all.Count;
         SetStatus($"Каналов: {count} · загрузка программы передач…");
         try
         {
-            var file = await Epg.EnsureFileAsync(url, _http);
-            var channels = _all;
-            var map = await Task.Run(() => Epg.Load(file, channels));
-            if (channels != _all) return;
+            var file = await Epg.EnsureFileAsync(url, _http, ct);
+            var map = await Task.Run(() => Epg.Load(file, channels), ct);
+            if (ct.IsCancellationRequested || channels != _all) return;
             foreach (var (ch, list) in map) ch.Programmes = list;
             UpdateNowAll();
             SetStatus($"Каналов: {count} · программа есть для {map.Count}");
@@ -201,7 +227,8 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            SetStatus($"Каналов: {count} · программа не загрузилась: {ex.Message}");
+            if (!ct.IsCancellationRequested && channels == _all)
+                SetStatus($"Каналов: {count} · программа не загрузилась: {ex.Message}");
         }
     }
 
@@ -1025,7 +1052,7 @@ public partial class MainWindow : Window
             case "prevInList": Step(-1); break;
             case "nextInList": Step(1); break;
             case "lastChannel":
-                if (_previous != null)
+                if (_previous != null && _visible.Contains(_previous))
                 {
                     var p = _previous;
                     if (!_view.Contains(p)) { SearchBox.Text = ""; SelectGroup(AllGroup); }
@@ -1117,12 +1144,15 @@ public partial class MainWindow : Window
     /// <summary>Переход на другой плейлист: всё, что относилось к прежнему, сбрасывается.</summary>
     async Task OpenActivePlaylistAsync()
     {
+        _loadCts?.Cancel();
+        var playlist = Pl;
         if (_current != null) _current.IsPlaying = false;
         _current = _previous = _epgChannel = null;
         _archive = null;
         _showHidden = false;
         _playId++;
         if (_player != null) { var p = _player; await Task.Run(() => p.Stop()); }
+        if (_closing || playlist != Pl) return;
         HideCenter();
         Osd.Visibility = Visibility.Collapsed;
         EpgPanel.Visibility = Visibility.Collapsed;

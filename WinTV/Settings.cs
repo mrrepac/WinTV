@@ -65,12 +65,19 @@ public sealed class Settings
     public static Settings Load()
     {
         Settings? s = null;
-        try
+        foreach (var path in new[] { FilePath, FilePath + ".bak" })
         {
-            if (File.Exists(FilePath))
-                s = JsonSerializer.Deserialize<Settings>(File.ReadAllText(FilePath));
+            try
+            {
+                if (File.Exists(path)) s = JsonSerializer.Deserialize<Settings>(File.ReadAllText(path));
+                if (s != null)
+                {
+                    if (path != FilePath) AtomicFile.Write(FilePath, JsonSerializer.Serialize(s, JsonOptions));
+                    break;
+                }
+            }
+            catch (Exception ex) { System.Diagnostics.Trace.TraceError("Settings load: {0}", ex.Message); }
         }
-        catch { }
         s ??= new Settings();
         if (s.Migrate()) s.Save();
         return s;
@@ -108,8 +115,12 @@ public sealed class Settings
         try
         {
             Directory.CreateDirectory(Dir);
-            File.WriteAllText(FilePath, JsonSerializer.Serialize(this, JsonOptions));
+            AtomicFile.Write(FilePath, JsonSerializer.Serialize(this, JsonOptions), FilePath + ".bak");
         }
-        catch { }
+        catch (Exception ex)
+        {
+            System.Windows.MessageBox.Show("Не удалось сохранить настройки: " + ex.Message,
+                "WinTV", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
+        }
     }
 }
