@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -76,7 +76,7 @@ public sealed class Settings
                     break;
                 }
             }
-            catch (Exception ex) { System.Diagnostics.Trace.TraceError("Settings load: {0}", ex.Message); }
+            catch (Exception ex) { AppLog.Error("Settings load", ex); }
         }
         s ??= new Settings();
         if (s.Migrate()) s.Save();
@@ -119,6 +119,7 @@ public sealed class Settings
         }
         catch (Exception ex)
         {
+            AppLog.Error("Settings save", ex);
             System.Windows.MessageBox.Show("Не удалось сохранить настройки: " + ex.Message,
                 "WinTV", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
         }

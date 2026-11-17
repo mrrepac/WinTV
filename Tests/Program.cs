@@ -1,4 +1,4 @@
-using System.IO.Compression;
+﻿using System.IO.Compression;
 using System.Net;
 using WinTV;
 using WinTV.Setup;
@@ -15,6 +15,73 @@ void Check(bool condition, string name)
 }
 try
 {
+    var recovery = new StreamRecovery();
+    recovery.Begin(0);
+    recovery.Buffering(false, 19_000);
+    Check(!recovery.LoadExpired(19_999) && recovery.LoadExpired(20_000), "Repeated buffering cannot postpone startup timeout");
+    for (int attempt = 1; attempt <= 3; attempt++)
+    {
+        recovery.Begin(0);
+        recovery.Playing(100);
+        recovery.Fail(true, 1100);
+        recovery.Fail(true, 1101);
+        Check(recovery.Retries == attempt && !recovery.RetryDue(3099) && recovery.RetryDue(3100),
+            $"Short stream and duplicate failure schedule just retry {attempt}");
+    }
+    recovery.Begin(0);
+    recovery.Fail(true, 100);
+    Check(recovery.CanReselect && !recovery.RetryDue(10_000), "Exhausted stream waits for manual retry");
+    recovery.Reset();
+    recovery.Begin(0);
+    recovery.Fail(true, 1000);
+    recovery.Reset();
+    recovery.Begin(1500);
+    Check(!recovery.RetryDue(3000) && recovery.Retries == 0, "Channel switch cancels the old pending retry");
+    recovery.Fail(true, 4000);
+    recovery.Begin(6000);
+    recovery.Playing(6100);
+    recovery.Buffering(false, 36_101);
+    Check(recovery.LoadExpired(56_101) && recovery.Retries == 0, "Stable playback restores budget and a later buffer stall times out");
+    recovery.Playing(57_000);
+    recovery.Pause(58_000);
+    recovery.Buffering(false, 60_000);
+    Check(!recovery.LoadExpired(100_000), "Paused channel does not time out");
+
+    var commands = new PlayerCommandQueue(TimeSpan.FromSeconds(5));
+    using var releaseFirst = new ManualResetEventSlim();
+    var firstStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var order = new List<int>();
+    var first = commands.Run("first", () => { firstStarted.SetResult(); releaseFirst.Wait(); order.Add(1); });
+    await firstStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    var second = commands.Run("second", () => order.Add(2));
+    Check(!first.IsCompleted && !second.IsCompleted, "Player commands return without blocking caller and wait for prior command");
+    releaseFirst.Set();
+    await Task.WhenAll(first, second);
+    Check(order.SequenceEqual(new[] { 1, 2 }), "Player commands execute in order");
+
+    var stuck = new PlayerCommandQueue(TimeSpan.FromMilliseconds(150));
+    using var unblock = new ManualResetEventSlim();
+    var stuckStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var stuckExited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    int notifications = 0, forbiddenCalls = 0;
+    stuck.Failed += () => notifications++;
+    try
+    {
+        var hung = stuck.Run("simulated hang", () => { stuckStarted.SetResult(); unblock.Wait(); stuckExited.SetResult(); });
+        await stuckStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var afterHang = stuck.Run("must not run", () => forbiddenCalls++);
+        await Task.WhenAll(hung, afterHang).WaitAsync(TimeSpan.FromSeconds(5));
+        Check(stuck.IsFaulted && notifications == 1 && forbiddenCalls == 0, "Timeout quarantines player without concurrent native calls");
+    }
+    finally { unblock.Set(); }
+    await stuckExited.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await stuck.Run("after native recovery", () => forbiddenCalls++);
+    Check(forbiddenCalls == 0, "Timed out player stays quarantined after late completion");
+
+    var brokenQueue = new PlayerCommandQueue();
+    await brokenQueue.Run("simulated error", () => throw new InvalidOperationException("test failure"));
+    Check(brokenQueue.IsFaulted, "Player exception is observed and quarantines player");
+
     var settings = Path.Combine(root, "settings.json");
     AtomicFile.Write(settings, "old");
     AtomicFile.Write(settings, "new", settings + ".bak");
@@ -97,6 +164,69 @@ try
         bool rejected = false;
         try { PayloadInstaller.Apply(zip, target, null); } catch (InvalidDataException) { rejected = true; }
         Check(rejected && !File.Exists(Path.Combine(root, "escape.txt")), "Archive traversal rejected");
+    }
+    if (args.Contains("--player-smoke"))
+    {
+        var wave = Path.Combine(root, "test.wav");
+        using (var writer = new BinaryWriter(File.Create(wave)))
+        {
+            const int bytes = 44100 * 2 * 3;
+            writer.Write(System.Text.Encoding.ASCII.GetBytes("RIFF")); writer.Write(36 + bytes);
+            writer.Write(System.Text.Encoding.ASCII.GetBytes("WAVEfmt ")); writer.Write(16);
+            writer.Write((short)1); writer.Write((short)1); writer.Write(44100); writer.Write(88200);
+            writer.Write((short)2); writer.Write((short)16);
+            writer.Write(System.Text.Encoding.ASCII.GetBytes("data")); writer.Write(bytes); writer.Write(new byte[bytes]);
+        }
+        LibVLCSharp.Shared.Core.Initialize();
+        var native = new LibVLCSharp.Shared.LibVLC("--aout=dummy", "--vout=dummy", "--no-video-title-show");
+        var player = new PlayerController(native);
+        try
+        {
+            player.PlayUrl(new Uri(wave).AbsoluteUri, 100, "", false, 50);
+            var deadline = DateTime.UtcNow.AddSeconds(8);
+            while (!player.IsPlaying && !player.IsFaulted && DateTime.UtcNow < deadline)
+            {
+                player.Refresh();
+                await Task.Delay(50);
+            }
+            Check(player.IsPlaying && !player.IsFaulted, "Native VLC playback starts through background controller");
+            // Serve part of a WAV over loopback, then drop the connection before Content-Length.
+            using var listener = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            var ended = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var playing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            await player.StopAsync();
+            player.Native.EndReached += (_, _) => ended.TrySetResult();
+            player.Native.EncounteredError += (_, _) => ended.TrySetResult();
+            player.Native.Playing += (_, _) => playing.TrySetResult();
+            player.PlayUrl($"http://127.0.0.1:{((IPEndPoint)listener.LocalEndpoint).Port}/live.wav", 100, "", false, 50);
+            using (var client = await listener.AcceptTcpClientAsync().WaitAsync(TimeSpan.FromSeconds(8)))
+            {
+                var stream = client.GetStream();
+                using var reader = new StreamReader(stream, leaveOpen: true);
+                while (await reader.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(3)) is { Length: > 0 }) { }
+                await Task.Delay(400);
+                var bytes = File.ReadAllBytes(wave);
+                await stream.WriteAsync(System.Text.Encoding.ASCII.GetBytes($"HTTP/1.0 200 OK\r\nContent-Type: audio/wav\r\nContent-Length: {bytes.Length}\r\n\r\n"));
+                await stream.WriteAsync(bytes.AsMemory(0, bytes.Length / 2));
+                await playing.Task.WaitAsync(TimeSpan.FromSeconds(8));
+            }
+            listener.Stop();
+            await ended.Task.WaitAsync(TimeSpan.FromSeconds(12));
+            Check(!player.IsFaulted, "Delayed HTTP audio starts and reports a dropped connection through VLC");
+            for (int n = 0; n < 20; n++)
+            {
+                player.PlayUrl(new Uri(wave).AbsoluteUri, 100, "", false, 50);
+                player.Volume = n + 20;
+                player.Mute = n % 2 == 0;
+                player.Refresh();
+            }
+            player.Pause();
+            await player.StopAsync().WaitAsync(TimeSpan.FromSeconds(15));
+            Check(!player.IsFaulted && !player.IsPlaying, "Rapid native switching, volume, pause and stop complete without collision");
+        }
+        finally { await player.CloseAsync().WaitAsync(TimeSpan.FromSeconds(15)); }
+        Check(!player.IsFaulted, "Native shutdown completes");
     }
     Console.WriteLine($"Passed: {passed}");
 }

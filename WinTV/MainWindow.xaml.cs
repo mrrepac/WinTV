@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Windows;
@@ -7,7 +7,7 @@ using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Threading;
 using LibVLCSharp.Shared;
-using VlcPlayer = LibVLCSharp.Shared.MediaPlayer;
+using VlcPlayer = WinTV.PlayerController;
 
 namespace WinTV;
 
@@ -38,7 +38,7 @@ public partial class MainWindow : Window
     Programme? _archive;
     string _archiveMode = "";
     bool _isFallback;
-    int _retries, _playId;
+    readonly StreamRecovery _recovery = new();
     Dictionary<Gesture, string> _keymap;
 
     readonly DispatcherTimer _minuteTimer = new() { Interval = TimeSpan.FromSeconds(30) };
@@ -68,7 +68,7 @@ public partial class MainWindow : Window
         _osdTimer.Tick += (_, _) => { _osdTimer.Stop(); Osd.Visibility = Visibility.Collapsed; };
         _volumeTimer.Tick += (_, _) => { _volumeTimer.Stop(); VolumeBox.Visibility = Visibility.Collapsed; };
         _numberTimer.Tick += (_, _) => { _numberTimer.Stop(); JumpToNumber(); };
-        _tickTimer.Tick += (_, _) => { if (Osd.Visibility == Visibility.Visible) FillOsd(); };
+        _tickTimer.Tick += (_, _) => { CheckStream(); _player?.Refresh(); if (Osd.Visibility == Visibility.Visible) FillOsd(); };
         _cursorTimer.Tick += (_, _) => { _cursorTimer.Stop(); if (_fullscreen && !_fsListShown) Overlay.Cursor = Cursors.None; };
         _controlsTimer.Tick += (_, _) =>
         {
@@ -89,6 +89,7 @@ public partial class MainWindow : Window
         Loaded += (_, _) => { _isLoaded = true; UpdateVolumeUi(); UpdatePinBtn(); SetSidebarVisible(_sidebarVisible, initial: true); };
         ContentRendered += OnLoaded;
         Closing += OnClosing;
+        Closed += (_, _) => { if (_player != null) _ = _player.CloseAsync(); };
         PreviewKeyDown += OnKey;
     }
 
@@ -101,25 +102,35 @@ public partial class MainWindow : Window
         _vlc = await Task.Run(() =>
         {
             Core.Initialize();
-            return new LibVLC("--no-video-title-show");
+            var vlc = new LibVLC("--no-video-title-show");
+            vlc.Log += (_, args) =>
+            {
+                if (args.Level == LogLevel.Error) AppLog.Write("VLC: " + args.Message);
+            };
+            return vlc;
         });
-        if (_closing) { _vlc.Dispose(); _vlc = null; return; }
-        _player = new VlcPlayer(_vlc)
+        if (_closing) { var unused = _vlc; _ = Task.Run(() => unused.Dispose()); _vlc = null; return; }
+        _player = await Task.Run(() => new VlcPlayer(_vlc));
+        if (_closing) { _ = _player.CloseAsync(); return; }
+        _player.Failed += () => Dispatcher.BeginInvoke(() =>
         {
-            EnableHardwareDecoding = true,
-            EnableKeyInput = false,
-            EnableMouseInput = false,
-        };
-        _player.Playing += (_, _) => Dispatcher.BeginInvoke(() => { OnPlaying(); UpdatePlayPauseBtn(); UpdateControlsInfo(); });
-        _player.Buffering += (_, a) => Dispatcher.BeginInvoke(() =>
+            KeepAwake.Set(false);
+            if (!_closing) ShowCenter("Плеер не отвечает. Закройте и откройте WinTV. Подробности в журнале ошибок.");
+        });
+        _player.Rejected += () => PostPlayerEvent(() => OnStreamFailed("VLC отклонил поток"));
+        _player.StateChanged += () => PostPlayerEvent(UpdatePlayPauseBtn);
+        _player.Native.Playing += (_, _) => PostPlayerEvent(() => { OnPlaying(); UpdatePlayPauseBtn(); UpdateControlsInfo(); });
+        _player.Native.Buffering += (_, a) => PostPlayerEvent(() =>
         {
+            if (!_recovery.AcceptEvents) return;
+            _recovery.Buffering(a.Cache >= 100, Environment.TickCount64);
             if (a.Cache < 100) ShowCenter($"Буферизация {a.Cache:0}%"); else HideCenter();
         });
-        _player.Paused += (_, _) => Dispatcher.BeginInvoke(() => { KeepAwake.Set(false); UpdatePlayPauseBtn(); });
-        _player.Stopped += (_, _) => Dispatcher.BeginInvoke(() => { KeepAwake.Set(false); UpdatePlayPauseBtn(); });
-        _player.EncounteredError += (_, _) => Dispatcher.BeginInvoke(OnStreamFailed);
-        _player.EndReached += (_, _) => Dispatcher.BeginInvoke(OnStreamEnded);
-        Video.MediaPlayer = _player;
+        _player.Native.Paused += (_, _) => PostPlayerEvent(() => { _recovery.Pause(Environment.TickCount64); KeepAwake.Set(false); UpdatePlayPauseBtn(); });
+        _player.Native.Stopped += (_, _) => PostPlayerEvent(() => { KeepAwake.Set(false); UpdatePlayPauseBtn(); });
+        _player.Native.EncounteredError += (_, _) => PostPlayerEvent(() => OnStreamFailed("Ошибка потока"));
+        _player.Native.EndReached += (_, _) => PostPlayerEvent(OnStreamEnded);
+        Video.MediaPlayer = _player.Native;
 
         if (_s.Active == null && !OpenSettings()) return;
         Topmost = _s.AlwaysOnTop;
@@ -131,19 +142,26 @@ public partial class MainWindow : Window
         await LoadAllAsync(autoplay: true);
     }
 
+    // Never call native VLC functions from its callbacks, or dispatch stale events after a switch.
+    void PostPlayerEvent(Action action)
+    {
+        var player = _player;
+        if (_closing || player == null || player.IgnoreEvents || Dispatcher.HasShutdownStarted) return;
+        int generation = player.ActiveGeneration;
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (!_closing && !player.IgnoreEvents && generation == player.Generation) action();
+        });
+    }
+
     void OnClosing(object? sender, System.ComponentModel.CancelEventArgs e)
     {
         _closing = true;
         _loadCts?.Cancel();
-        _playId++;
+        _recovery.Reset();
         KeepAwake.Set(false);
-        if (_player != null)
-        {
-            // Без аудиовыхода (поток остановлен) VLC отдаёт −1 — тогда оставляем сохранённую громкость.
-            if (_player.Volume >= 0) _s.Volume = _player.Volume;
-            var p = _player;
-            Task.Run(() => p.Stop()).Wait(2000);
-        }
+        foreach (var timer in new[] { _minuteTimer, _osdTimer, _volumeTimer, _numberTimer, _tickTimer, _cursorTimer, _controlsTimer }) timer.Stop();
+        AppLog.Write("Application closing");
         _s.Save();
     }
 
@@ -165,6 +183,7 @@ public partial class MainWindow : Window
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
         catch (Exception ex)
         {
+            AppLog.Error("Playlist/EPG loading", ex);
             if (!ct.IsCancellationRequested && playlist == Pl)
                 SetStatus("Не удалось загрузить плейлист: " + ex.Message);
             return;
@@ -195,12 +214,12 @@ public partial class MainWindow : Window
         else if (oldKey != null)
         {
             _archive = null;
-            _playId++;
+            _recovery.Reset();
             KeepAwake.Set(false);
             HideCenter();
             Osd.Visibility = Visibility.Collapsed;
             UpdateControlsInfo();
-            if (_player != null) { var player = _player; await Task.Run(() => player.Stop()); }
+            if (_player != null) { var player = _player; await player.StopAsync(); }
             if (ct.IsCancellationRequested || playlist != Pl) return;
             UpdatePlayPauseBtn();
         }
@@ -227,6 +246,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            AppLog.Error("Playlist/EPG loading", ex);
             if (!ct.IsCancellationRequested && channels == _all)
                 SetStatus($"Каналов: {count} · программа не загрузилась: {ex.Message}");
         }
@@ -311,7 +331,7 @@ public partial class MainWindow : Window
         if (ItemsControl.ContainerFromElement(ChannelList, e.OriginalSource as DependencyObject) is not ListBoxItem item
             || item.DataContext is not Channel ch) return;
         if ((e.OriginalSource as FrameworkElement)?.Tag as string == "fav") ToggleFavorite(ch);
-        else if (ch != _current || _archive != null) Play(ch);
+        else if (ch != _current || _archive != null || _recovery.CanReselect) Play(ch);
     }
 
     void FavMenu_Click(object sender, RoutedEventArgs e)
@@ -354,13 +374,13 @@ public partial class MainWindow : Window
 
     void Play(Channel ch, Programme? archive = null, string? mode = null, bool fallback = false)
     {
-        if (_player == null || _vlc == null) return;
+        if (_closing || _player == null || _vlc == null) return;
         if (_current != null && _current != ch) { _previous = _current; _current.IsPlaying = false; }
         _current = ch;
         ch.IsPlaying = true;
         _archive = archive;
         _isFallback = fallback;
-        _retries = 0;
+        _recovery.Reset();
 
         var url = ch.Url;
         if (archive != null)
@@ -378,22 +398,25 @@ public partial class MainWindow : Window
 
     void StartMedia(string url)
     {
-        _playId++;
-        using var media = new Media(_vlc!, new Uri(url));
-        media.AddOption($":network-caching={_s.NetworkCaching}");
-        if (!string.IsNullOrWhiteSpace(_s.UserAgent)) media.AddOption($":http-user-agent={_s.UserAgent}");
-        _player!.Play(media);
-        _player.Mute = _muted;
-        _player.Volume = _s.Volume;
+        if (_closing) return;
+        if (_player!.IsFaulted)
+        {
+            ShowCenter("Плеер не отвечает. Закройте и откройте WinTV. Подробности в журнале ошибок.");
+            return;
+        }
+        _recovery.Begin(Environment.TickCount64);
+        _player.PlayUrl(url, _s.NetworkCaching, _s.UserAgent, _muted, _s.Volume);
         ShowCenter("Загрузка…");
     }
 
     void OnPlaying()
     {
+        if (_closing || !_recovery.AcceptEvents) return;
+        _recovery.Playing(Environment.TickCount64);
+        _player?.Refresh();
         KeepAwake.Set(true);
         if (_player != null) { _player.Mute = _muted; _player.Volume = _s.Volume; }
         HideCenter();
-        _retries = 0;
         if (_archive != null && _s.CatchupMode == "auto" && _s.CatchupDetected != _archiveMode)
         {
             _s.CatchupDetected = _archiveMode;
@@ -401,10 +424,22 @@ public partial class MainWindow : Window
         }
     }
 
-    async void OnStreamFailed()
+    void CheckStream()
+    {
+        if (_closing || _current == null || _player?.IsFaulted != false) return;
+        long now = Environment.TickCount64;
+        if (_recovery.LoadExpired(now)) OnStreamFailed("Истекло время загрузки");
+        else if (_recovery.RetryDue(now)) StartMedia(_current.Url);
+    }
+
+    void OnStreamFailed(string reason)
     {
         KeepAwake.Set(false);
-        if (_current == null) return;
+        if (_closing || _current == null || _player?.IsFaulted == true) return;
+        if (!_recovery.AcceptEvents) return;
+        _recovery.Fail(_archive == null, Environment.TickCount64);
+        AppLog.Write($"Stream failure: {reason}; retries={_recovery.Retries}");
+        _ = _player!.StopAsync();
         if (_archive != null)
         {
             if (_s.CatchupMode == "auto" && _current.CatchupSource.Length == 0 && !_isFallback)
@@ -415,19 +450,17 @@ public partial class MainWindow : Window
             ShowCenter("Архив недоступен");
             return;
         }
-        if (_retries >= 3) { ShowCenter("Не удалось открыть поток"); return; }
-        _retries++;
-        ShowCenter($"Переподключение… ({_retries})");
-        var id = _playId;
-        await Task.Delay(2000);
-        if (id == _playId && _current != null && _archive == null) StartMedia(_current.Url);
+        ShowCenter(_recovery.WaitingToRetry
+            ? $"{reason}. Переподключение… ({_recovery.Retries}/{StreamRecovery.MaxRetries})"
+            : $"{reason}. Выберите канал ещё раз для повтора.");
     }
 
     void OnStreamEnded()
     {
         KeepAwake.Set(false);
-        if (_archive == null) OnStreamFailed();
-        else ShowCenter("Запись закончилась");
+        if (!_recovery.AcceptEvents) return;
+        if (_archive == null) OnStreamFailed("Эфир прервался");
+        else { _recovery.Finish(); ShowCenter("Запись закончилась"); }
     }
 
     void Step(int delta)
@@ -889,7 +922,7 @@ public partial class MainWindow : Window
     void FsPlaySelected()
     {
         if (FsChannels.SelectedItem is not Channel ch) return;
-        if (ch != _current || _archive != null) Play(ch);
+        if (ch != _current || _archive != null || _recovery.CanReselect) Play(ch);
         ChannelList.SelectedItem = ch;
         ShowFsList(false);
     }
@@ -1003,7 +1036,7 @@ public partial class MainWindow : Window
                 else if (inGroups) FocusList(ChannelList);
                 else if (ChannelList.SelectedItem is Channel sel)
                 {
-                    if (sel != _current || _archive != null) Play(sel);
+                    if (sel != _current || _archive != null || _recovery.CanReselect) Play(sel);
                 }
                 break;
             case Key.Left when plain && inChannels && !_fullscreen:
@@ -1150,8 +1183,8 @@ public partial class MainWindow : Window
         _current = _previous = _epgChannel = null;
         _archive = null;
         _showHidden = false;
-        _playId++;
-        if (_player != null) { var p = _player; await Task.Run(() => p.Stop()); }
+        _recovery.Reset();
+        if (_player != null) { var p = _player; await p.StopAsync(); }
         if (_closing || playlist != Pl) return;
         HideCenter();
         Osd.Visibility = Visibility.Collapsed;

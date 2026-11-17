@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using Microsoft.Win32;
@@ -9,9 +9,13 @@ public partial class App : Application
 {
     protected override void OnStartup(StartupEventArgs e)
     {
+        AppLog.Write("Application starting " + typeof(App).Assembly.GetName().Version);
+        AppDomain.CurrentDomain.UnhandledException += (_, args) => AppLog.Write("Unhandled: " + args.ExceptionObject);
+        TaskScheduler.UnobservedTaskException += (_, args) => AppLog.Error("Unobserved task", args.Exception);
         base.OnStartup(e);
         DispatcherUnhandledException += (s, args) =>
         {
+            AppLog.Error("UI exception", args.Exception);
             MessageBox.Show($"Произошла непредвиденная ошибка:\n\n{args.Exception}", "WinTV — ошибка",
                 MessageBoxButton.OK, MessageBoxImage.Error);
             // Если главное окно уже открыто, не роняем приложение из-за единичной ошибки.
